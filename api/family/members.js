@@ -1,0 +1,133 @@
+import { getFirestore } from "../../lib/firebase-admin.js";
+import { requireAuth } from "../../lib/auth-middleware.js";
+import { validateName } from "../../lib/validators.js";
+import { v4 as uuidv4 } from "uuid";
+
+/**
+ * /api/family/members
+ *
+ * GET  - List all members of the authenticated user's family
+ * POST - Admin: add a new family member
+ */
+async function membersHandler(req, res) {
+  const { uid, familyId, role } = req.user;
+  const firestore = getFirestore();
+
+  if (req.method === "GET") {
+    try {
+      const membersSnapshot = await firestore
+        .collection("families")
+        .doc(familyId)
+        .collection("members")
+        .get();
+
+      const members = membersSnapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name || "Family Member",
+          relationship: data.relationship || "Member",
+          role: data.role || "MEMBER",
+          status: data.status || "PENDING",
+          onlineStatus: data.onlineStatus || "OFFLINE",
+          statusNote: data.statusNote || "",
+          initials: data.initials || "??",
+          avatarColorIndex: data.avatarColorIndex || 0,
+          lastSeen: data.lastSeen || null,
+        };
+      });
+
+      return res.status(200).json({
+        success: true,
+        familyId,
+        members,
+        count: members.length,
+      });
+    } catch (err) {
+      console.error("Error listing members:", err);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to fetch family members.",
+      });
+    }
+  }
+
+  if (req.method === "POST") {
+    // Only admins can add members
+    if (role !== "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        error: "Only family admins can add members.",
+      });
+    }
+
+    const { name, relationship, memberRole = "MEMBER" } = req.body || {};
+
+    const nameError = validateName(name, "Member name");
+    if (nameError) {
+      return res.status(400).json({ success: false, error: nameError });
+    }
+
+    const relError = validateName(relationship, "Relationship");
+    if (relError) {
+      return res.status(400).json({ success: false, error: relError });
+    }
+
+    const allowedRoles = ["ADMIN", "PARENT", "SIBLING", "GRANDPARENT", "MEMBER"];
+    if (!allowedRoles.includes(memberRole.toUpperCase())) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid role. Must be one of: ${allowedRoles.join(", ")}`,
+      });
+    }
+
+    try {
+      const memberUid = uuidv4();
+      const now = new Date().toISOString();
+      const initials = name.trim().substring(0, 2).toUpperCase();
+
+      const memberData = {
+        uid: memberUid,
+        name: name.trim(),
+        relationship: relationship.trim(),
+        role: memberRole.toUpperCase(),
+        status: "APPROVED",
+        onlineStatus: "OFFLINE",
+        statusNote: "Joined family space",
+        initials,
+        avatarColorIndex: name.trim().split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 6,
+        lastSeen: now,
+        createdAt: now,
+        addedBy: uid,
+      };
+
+      await firestore
+        .collection("families")
+        .doc(familyId)
+        .collection("members")
+        .doc(memberUid)
+        .set(memberData);
+
+      return res.status(201).json({
+        success: true,
+        member: {
+          id: memberUid,
+          ...memberData,
+        },
+      });
+    } catch (err) {
+      console.error("Error adding member:", err);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to add family member.",
+      });
+    }
+  }
+
+  res.setHeader("Allow", "GET, POST");
+  return res.status(405).json({ success: false, error: "Method not allowed." });
+}
+
+export default function handler(req, res) {
+  requireAuth(req, res, () => membersHandler(req, res));
+}
