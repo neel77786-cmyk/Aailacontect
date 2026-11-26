@@ -22,7 +22,7 @@ async function historyHandler(req, res) {
       .doc(familyId)
       .collection("calls")
       .orderBy("createdAt", "desc")
-      .limit(50)
+      .limit(15)
       .get();
 
     const nowMs = Date.now();
