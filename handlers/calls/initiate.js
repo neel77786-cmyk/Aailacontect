@@ -79,15 +79,15 @@ async function initiateHandler(req, res) {
       .doc(callId)
       .set(callData);
 
-    // Send FCM incoming call push if receiver has a registered FCM token
+    // Send high-priority data-only FCM push so Android wakes up & triggers FullScreenIntent even when app is closed
     if (receiver.fcmToken) {
       getFirebaseAdmin()
         .messaging()
         .send({
           token: receiver.fcmToken,
-          notification: {
-            title: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call`,
-            body: `${name} is calling you on AAILA`,
+          android: {
+            priority: "high",
+            ttl: 30000,
           },
           data: {
             type: "call",
@@ -96,6 +96,8 @@ async function initiateHandler(req, res) {
             callerName: name,
             callType: cleanType,
             roomName,
+            title: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call`,
+            body: `${name} is calling you on AAILA`,
           },
         })
         .catch(() => {});
