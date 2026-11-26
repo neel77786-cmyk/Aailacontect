@@ -111,7 +111,7 @@ export default async function handler(req, res) {
       createdAt: now,
     };
 
-    // Write both documents in a batch
+    // Write family, admin member, and default Family Circle group thread in a batch
     const batch = firestore.batch();
     batch.set(firestore.collection("families").doc(cleanFamilyId), familyData);
     batch.set(
@@ -121,6 +121,24 @@ export default async function handler(req, res) {
         .collection("members")
         .doc(uid),
       memberData
+    );
+    batch.set(
+      firestore
+        .collection("families")
+        .doc(cleanFamilyId)
+        .collection("threads")
+        .doc("thread_family_circle"),
+      {
+        id: "thread_family_circle",
+        title: `${familyName.trim()} Circle`,
+        subtitle: "Private Family Group",
+        memberId: null,
+        isGroup: true,
+        initials: "FC",
+        lastMessagePreview: "Welcome to your private family chat!",
+        updatedAt: now,
+        createdAt: now,
+      }
     );
     await batch.commit();
 

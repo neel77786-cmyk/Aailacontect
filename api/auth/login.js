@@ -1,3 +1,4 @@
+import bcrypt from "bcryptjs";
 import { getAuth, getFirestore } from "../../lib/firebase-admin.js";
 import { signToken } from "../../lib/auth-middleware.js";
 import { validateFamilyId, validatePassword, collectErrors } from "../../lib/validators.js";
@@ -5,15 +6,9 @@ import { validateFamilyId, validatePassword, collectErrors } from "../../lib/val
 /**
  * POST /api/auth/login
  *
- * Authenticates a user with Family ID + password.
- * - Looks up the family document and resolves the admin UID
- * - Verifies the password against Firebase Auth (via custom token exchange)
- * - Returns a signed JWT session token
- *
- * NOTE: Firebase Admin SDK cannot directly verify passwords.
- * We use a two-step approach:
- *   1. Look up the user by synthetic email
- *   2. Use Firebase Auth REST API (identitytoolkit) to verify the password
+ * Supports:
+ * 1. Family Admin login: { familyId, password } (verifies via Firebase Auth REST API)
+ * 2. Family Member login: { familyId, memberIdentifier, password } (verifies via bcryptjs hash in Firestore)
  */
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -22,9 +17,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { familyId, password } = req.body || {};
+    const { familyId, password, memberIdentifier } = req.body || {};
 
-    // Validate inputs
     const errors = collectErrors([
       validateFamilyId(familyId),
       validatePassword(password),
@@ -35,18 +29,105 @@ export default async function handler(req, res) {
     }
 
     const cleanFamilyId = familyId.trim().toUpperCase();
-    const syntheticEmail = `admin.${cleanFamilyId.toLowerCase()}@aaila.family`;
-
-    const auth = getAuth();
     const firestore = getFirestore();
 
-    // Step 1: Verify password via Firebase Auth REST API
-    const firebaseApiKey = process.env.FIREBASE_WEB_API_KEY;
+    const familyDoc = await firestore
+      .collection("families")
+      .doc(cleanFamilyId)
+      .get();
+
+    if (!familyDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        error: `Family Space "${cleanFamilyId}" not found.`,
+      });
+    }
+
+    const familyData = familyDoc.data();
+    const cleanMemberId = memberIdentifier?.trim();
+
+    // Case A: Member login with memberIdentifier (name or memberId)
+    if (cleanMemberId && cleanMemberId.toUpperCase() !== "ADMIN") {
+      const membersSnap = await firestore
+        .collection("families")
+        .doc(cleanFamilyId)
+        .collection("members")
+        .get();
+
+      const matchedDoc = membersSnap.docs.find((doc) => {
+        const d = doc.data();
+        return (
+          doc.id.toLowerCase() === cleanMemberId.toLowerCase() ||
+          (d.memberId && d.memberId.toLowerCase() === cleanMemberId.toLowerCase()) ||
+          (d.name && d.name.toLowerCase() === cleanMemberId.toLowerCase())
+        );
+      });
+
+      if (!matchedDoc) {
+        return res.status(401).json({
+          success: false,
+          error: "Member not found in this Family Space.",
+        });
+      }
+
+      const memberData = matchedDoc.data();
+      if (!memberData.passwordHash) {
+        return res.status(401).json({
+          success: false,
+          error: "This member account uses Admin login. Leave Member Name empty to sign in as Admin.",
+        });
+      }
+
+      const passwordMatches = await bcrypt.compare(password, memberData.passwordHash);
+      if (!passwordMatches) {
+        return res.status(401).json({
+          success: false,
+          error: "Invalid Family ID, member name, or password.",
+        });
+      }
+
+      const memberStatus = memberData.status || "PENDING";
+      if (memberStatus !== "APPROVED") {
+        return res.status(403).json({
+          success: false,
+          error:
+            memberStatus === "PENDING"
+              ? "Your join request is waiting for Family Admin approval."
+              : `Your access is currently "${memberStatus}". Contact your family admin.`,
+        });
+      }
+
+      const uid = matchedDoc.id;
+      const role = memberData.role || "MEMBER";
+
+      await matchedDoc.ref.update({
+        lastSeen: new Date().toISOString(),
+        onlineStatus: "AVAILABLE",
+      });
+
+      const token = signToken(uid, cleanFamilyId, role);
+
+      return res.status(200).json({
+        success: true,
+        userId: uid,
+        familyId: cleanFamilyId,
+        familyName: familyData.familyName || "Family Space",
+        adminName: familyData.adminName || "Admin",
+        memberName: memberData.name || "Member",
+        role,
+        token,
+        expiresIn: process.env.JWT_EXPIRY || "24h",
+      });
+    }
+
+    // Case B: Admin login (existing behavior, 100% backward compatible)
+    const syntheticEmail = `admin.${cleanFamilyId.toLowerCase()}@aaila.family`;
+    const auth = getAuth();
+    const firebaseApiKey = process.env.FIREBASE_WEB_API_KEY?.trim();
 
     let firebaseUid;
 
     if (firebaseApiKey) {
-      // Use Firebase Auth REST API for password verification
       const authResponse = await fetch(
         `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseApiKey}`,
         {
@@ -91,8 +172,6 @@ export default async function handler(req, res) {
       const authData = await authResponse.json();
       firebaseUid = authData.localId;
     } else {
-      // Fallback: look up user by email (less secure — no password verification via REST)
-      // In production, FIREBASE_WEB_API_KEY should always be set
       try {
         const userRecord = await auth.getUserByEmail(syntheticEmail);
         firebaseUid = userRecord.uid;
@@ -105,32 +184,8 @@ export default async function handler(req, res) {
         }
         throw lookupErr;
       }
-
-      // Verify password by generating a custom token and attempting sign-in
-      // Since we don't have the web API key, we trust the Admin SDK lookup
-      // but log a warning
-      console.warn(
-        "FIREBASE_WEB_API_KEY not set — password verification is bypassed. " +
-          "Set this variable for production security."
-      );
     }
 
-    // Step 2: Check family document exists
-    const familyDoc = await firestore
-      .collection("families")
-      .doc(cleanFamilyId)
-      .get();
-
-    if (!familyDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        error: `Family Space "${cleanFamilyId}" not found.`,
-      });
-    }
-
-    const familyData = familyDoc.data();
-
-    // Step 3: Check member status
     const memberDoc = await firestore
       .collection("families")
       .doc(cleanFamilyId)
@@ -155,20 +210,13 @@ export default async function handler(req, res) {
       });
     }
 
-    const role = memberData.role || "MEMBER";
+    const role = memberData.role || "ADMIN";
 
-    // Step 4: Update last seen
-    await firestore
-      .collection("families")
-      .doc(cleanFamilyId)
-      .collection("members")
-      .doc(firebaseUid)
-      .update({
-        lastSeen: new Date().toISOString(),
-        onlineStatus: "AVAILABLE",
-      });
+    await memberDoc.ref.update({
+      lastSeen: new Date().toISOString(),
+      onlineStatus: "AVAILABLE",
+    });
 
-    // Step 5: Sign session JWT
     const token = signToken(firebaseUid, cleanFamilyId, role);
 
     return res.status(200).json({
@@ -177,6 +225,7 @@ export default async function handler(req, res) {
       familyId: cleanFamilyId,
       familyName: familyData.familyName || "Family Space",
       adminName: familyData.adminName || "Admin",
+      memberName: memberData.name || familyData.adminName || "Admin",
       role,
       token,
       expiresIn: process.env.JWT_EXPIRY || "24h",

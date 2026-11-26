@@ -1,12 +1,12 @@
 import { getFirestore } from "../../lib/firebase-admin.js";
-import { requireAuth } from "../../lib/auth-middleware.js";
+import { requireApprovedMember } from "../../lib/auth-middleware.js";
 import { validateName } from "../../lib/validators.js";
 import { v4 as uuidv4 } from "uuid";
 
 /**
  * /api/family/members
  *
- * GET  - List all members of the authenticated user's family
+ * GET  - List approved (and for Admin, pending) members of the authenticated user's family
  * POST - Admin: add a new family member
  */
 async function membersHandler(req, res) {
@@ -21,10 +21,11 @@ async function membersHandler(req, res) {
         .collection("members")
         .get();
 
-      const members = membersSnapshot.docs.map((doc) => {
+      const allMembers = membersSnapshot.docs.map((doc) => {
         const data = doc.data();
         return {
           id: doc.id,
+          memberId: data.memberId || doc.id,
           name: data.name || "Family Member",
           relationship: data.relationship || "Member",
           role: data.role || "MEMBER",
@@ -33,15 +34,21 @@ async function membersHandler(req, res) {
           statusNote: data.statusNote || "",
           initials: data.initials || "??",
           avatarColorIndex: data.avatarColorIndex || 0,
+          photoUrl: data.photoUrl || null,
           lastSeen: data.lastSeen || null,
         };
       });
 
+      // Only APPROVED members are visible in the directory; PENDING are returned separately for Admin
+      const approvedMembers = allMembers.filter((m) => m.status === "APPROVED");
+      const pendingMembers = role === "ADMIN" ? allMembers.filter((m) => m.status === "PENDING") : [];
+
       return res.status(200).json({
         success: true,
         familyId,
-        members,
-        count: members.length,
+        members: approvedMembers,
+        pendingMembers,
+        count: approvedMembers.length,
       });
     } catch (err) {
       console.error("Error listing members:", err);
@@ -53,7 +60,6 @@ async function membersHandler(req, res) {
   }
 
   if (req.method === "POST") {
-    // Only admins can add members
     if (role !== "ADMIN") {
       return res.status(403).json({
         success: false,
@@ -128,6 +134,4 @@ async function membersHandler(req, res) {
   return res.status(405).json({ success: false, error: "Method not allowed." });
 }
 
-export default function handler(req, res) {
-  requireAuth(req, res, () => membersHandler(req, res));
-}
+export default requireApprovedMember(membersHandler);

@@ -1,11 +1,11 @@
 import { getFirestore } from "../../lib/firebase-admin.js";
-import { requireAuth } from "../../lib/auth-middleware.js";
-import { v4 as uuidv4 } from "uuid";
+import { requireApprovedMember } from "../../lib/auth-middleware.js";
 
 /**
- * /api/calls/history
+ * GET /api/calls/history
  *
- * GET - Fetch call history for the authenticated user's family
+ * Returns real call history for the authenticated user's family
+ * plus any active incoming call (OFFERING within last 60 seconds).
  */
 async function historyHandler(req, res) {
   if (req.method !== "GET") {
@@ -14,7 +14,7 @@ async function historyHandler(req, res) {
   }
 
   try {
-    const { familyId } = req.user;
+    const { uid, familyId } = req.user;
     const firestore = getFirestore();
 
     const callsSnapshot = await firestore
@@ -25,18 +25,55 @@ async function historyHandler(req, res) {
       .limit(50)
       .get();
 
+    const nowMs = Date.now();
+    let activeIncomingCall = null;
+
     const calls = callsSnapshot.docs.map((doc) => {
       const data = doc.data();
+      const isOutgoing = data.callerId === uid;
+      const peerId = isOutgoing ? data.receiverId : data.callerId;
+      const peerName = isOutgoing
+        ? data.receiverName || "Family Member"
+        : data.callerName || "Family Member";
+
+      const createdMs = data.createdAt ? new Date(data.createdAt).getTime() : 0;
+      if (
+        !activeIncomingCall &&
+        data.receiverId === uid &&
+        data.status === "OFFERING" &&
+        nowMs - createdMs < 60_000
+      ) {
+        activeIncomingCall = {
+          callId: doc.id,
+          callerId: data.callerId,
+          callerName: data.callerName || "Family Member",
+          callType: data.callType || "VOICE",
+          roomName: data.roomName || `call_${doc.id}`,
+          status: data.status,
+          startTime: data.startTime,
+        };
+      }
+
+      let direction = isOutgoing ? "OUTGOING" : "INCOMING";
+      if (!isOutgoing && (data.status === "MISSED" || data.status === "REJECTED")) {
+        direction = "MISSED";
+      }
+
       return {
         id: doc.id,
         callId: data.callId || doc.id,
-        targetMemberId: data.targetMemberId || "",
-        callerName: data.callerName || "Unknown",
+        callerId: data.callerId || "",
+        receiverId: data.receiverId || "",
+        peerId: peerId || "",
+        peerName,
+        initials: peerName.substring(0, 2).toUpperCase(),
         callType: data.callType || "VOICE",
-        status: data.status || "ENDED",
-        direction: data.direction || "OUTGOING",
-        createdAt: data.createdAt || null,
-        durationSeconds: data.durationSeconds || 0,
+        status: data.status || "COMPLETED",
+        direction,
+        roomName: data.roomName || "",
+        startTime: data.startTime || data.createdAt || null,
+        endTime: data.endTime || null,
+        durationSeconds: Number(data.durationSeconds || 0),
       };
     });
 
@@ -44,6 +81,7 @@ async function historyHandler(req, res) {
       success: true,
       familyId,
       calls,
+      activeIncomingCall,
       count: calls.length,
     });
   } catch (err) {
@@ -55,6 +93,4 @@ async function historyHandler(req, res) {
   }
 }
 
-export default function handler(req, res) {
-  requireAuth(req, res, () => historyHandler(req, res));
-}
+export default requireApprovedMember(historyHandler);

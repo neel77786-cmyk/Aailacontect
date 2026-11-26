@@ -1,11 +1,10 @@
-import { requireAuth } from "../../lib/auth-middleware.js";
+import { requireApprovedMember } from "../../lib/auth-middleware.js";
 import { generateLiveKitToken } from "../../lib/livekit.js";
 
 /**
  * POST /api/livekit/token
  *
- * Generates a LiveKit access token for the authenticated user.
- * The Android app uses this token to connect to a LiveKit room.
+ * Generates a LiveKit access token ONLY for verified, APPROVED members of the family.
  */
 async function tokenHandler(req, res) {
   if (req.method !== "POST") {
@@ -14,7 +13,7 @@ async function tokenHandler(req, res) {
   }
 
   try {
-    const { uid, familyId } = req.user;
+    const { uid, familyId, name } = req.user;
     const { roomName, participantName } = req.body || {};
 
     if (!roomName || typeof roomName !== "string" || roomName.trim().length === 0) {
@@ -24,9 +23,9 @@ async function tokenHandler(req, res) {
       });
     }
 
-    const displayName = participantName?.trim() || `User-${uid.substring(0, 6)}`;
+    const displayName = participantName?.trim() || name || `User-${uid.substring(0, 6)}`;
 
-    // Scope room name to the family for isolation
+    // Scope room name to the family for strict isolation
     const scopedRoomName = `${familyId}_${roomName.trim()}`;
     const participantIdentity = `${familyId}_${uid}`;
 
@@ -59,6 +58,4 @@ async function tokenHandler(req, res) {
   }
 }
 
-export default function handler(req, res) {
-  requireAuth(req, res, () => tokenHandler(req, res));
-}
+export default requireApprovedMember(tokenHandler);

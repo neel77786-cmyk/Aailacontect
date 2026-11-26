@@ -1,11 +1,11 @@
-import { getFirestore } from "../../lib/firebase-admin.js";
-import { requireAuth } from "../../lib/auth-middleware.js";
 import { v4 as uuidv4 } from "uuid";
+import { getFirebaseAdmin, getFirestore } from "../../lib/firebase-admin.js";
+import { requireApprovedMember } from "../../lib/auth-middleware.js";
 
 /**
  * POST /api/calls/initiate
  *
- * Creates a new call document in Firestore for signaling.
+ * Creates a real call record + LiveKit room name and notifies the receiver via FCM.
  */
 async function initiateHandler(req, res) {
   if (req.method !== "POST") {
@@ -14,7 +14,7 @@ async function initiateHandler(req, res) {
   }
 
   try {
-    const { uid, familyId } = req.user;
+    const { uid, familyId, name } = req.user;
     const { targetMemberId, callType = "VOICE" } = req.body || {};
 
     if (!targetMemberId) {
@@ -25,7 +25,8 @@ async function initiateHandler(req, res) {
     }
 
     const allowedTypes = ["VOICE", "VIDEO"];
-    if (!allowedTypes.includes(callType.toUpperCase())) {
+    const cleanType = callType.toUpperCase();
+    if (!allowedTypes.includes(cleanType)) {
       return res.status(400).json({
         success: false,
         error: "callType must be VOICE or VIDEO.",
@@ -33,8 +34,6 @@ async function initiateHandler(req, res) {
     }
 
     const firestore = getFirestore();
-
-    // Verify target member exists
     const memberDoc = await firestore
       .collection("families")
       .doc(familyId)
@@ -42,24 +41,32 @@ async function initiateHandler(req, res) {
       .doc(targetMemberId)
       .get();
 
-    if (!memberDoc.exists) {
+    if (!memberDoc.exists || memberDoc.data().status !== "APPROVED") {
       return res.status(404).json({
         success: false,
-        error: "Target family member not found.",
+        error: "Approved target family member not found.",
       });
     }
 
+    const receiver = memberDoc.data();
     const callId = uuidv4();
+    const roomName = `call_${callId.replace(/-/g, "").substring(0, 12)}`;
     const now = new Date().toISOString();
 
     const callData = {
       callId,
       familyId,
-      callerUid: uid,
-      targetMemberId,
-      callType: callType.toUpperCase(),
+      callerId: uid,
+      callerName: name,
+      receiverId: targetMemberId,
+      receiverName: receiver.name || "Family Member",
+      receiverInitials: receiver.initials || "FM",
+      callType: cleanType,
+      roomName,
       status: "OFFERING",
-      direction: "OUTGOING",
+      startTime: now,
+      endTime: null,
+      durationSeconds: 0,
       createdAt: now,
     };
 
@@ -70,9 +77,32 @@ async function initiateHandler(req, res) {
       .doc(callId)
       .set(callData);
 
+    // Send FCM incoming call push if receiver has a registered FCM token
+    if (receiver.fcmToken) {
+      getFirebaseAdmin()
+        .messaging()
+        .send({
+          token: receiver.fcmToken,
+          notification: {
+            title: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call`,
+            body: `${name} is calling you on AAILA`,
+          },
+          data: {
+            type: "call",
+            callId,
+            callerId: uid,
+            callerName: name,
+            callType: cleanType,
+            roomName,
+          },
+        })
+        .catch(() => {});
+    }
+
     return res.status(201).json({
       success: true,
       callId,
+      roomName,
       status: "OFFERING",
     });
   } catch (err) {
@@ -84,6 +114,4 @@ async function initiateHandler(req, res) {
   }
 }
 
-export default function handler(req, res) {
-  requireAuth(req, res, () => initiateHandler(req, res));
-}
+export default requireApprovedMember(initiateHandler);
