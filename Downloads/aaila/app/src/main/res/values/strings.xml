@@ -1,0 +1,98 @@
+<resources>
+    <string name="app_name">AAILA</string>
+    <string name="app_tagline">Together, Always.</string>
+    <string name="app_subtitle">Private Family Communication</string>
+    <string name="logo_content_description">AAILA family app emblem</string>
+
+    <!-- Phase 1 / Backend Configuration Notices -->
+    <string name="phase1_badge_title">Phase 1 Foundation · UI Preview</string>
+    <string name="phase1_backend_notice">Backend services (Firebase Auth, Cloud Firestore, and WebRTC signaling) are not connected yet. Interactive flows show UI previews only.</string>
+    <string name="phase2_auth_required_notice">Live authentication requires Firebase / Server configuration in Phase 2.</string>
+    <string name="phase2_calling_notice">UI Preview · Real-time audio/video calling requires WebRTC &amp; signaling server setup (Phase 2).</string>
+    <string name="phase2_messaging_notice">UI Preview · Real-time message delivery requires Firebase Firestore &amp; FCM setup (Phase 2).</string>
+
+    <!-- Login Screen -->
+    <string name="login_title">Welcome Back</string>
+    <string name="login_subtitle">Sign in to your private family space using your Family ID and Password.</string>
+    <string name="label_family_id">Family ID</string>
+    <string name="hint_family_id">e.g. AAILA-HOME-01</string>
+    <string name="label_password">Password</string>
+    <string name="hint_password">Enter family password</string>
+    <string name="action_sign_in">Sign In</string>
+    <string name="action_preview_dashboard">Enter UI Preview</string>
+    <string name="action_go_to_admin_setup">First time? Create a Family Space</string>
+    <string name="error_empty_family_id">Please enter your Family ID.</string>
+    <string name="error_invalid_family_id">Family ID must be 4–24 characters using letters, numbers, or hyphens.</string>
+    <string name="error_empty_password">Please enter your family password.</string>
+    <string name="error_short_password">Password must be at least 6 characters.</string>
+    <string name="cd_toggle_password">Toggle password visibility</string>
+
+    <!-- Admin Setup Screen -->
+    <string name="admin_setup_title">Create Family Space</string>
+    <string name="admin_setup_subtitle">Set up your private AAILA home as the Family Admin.</string>
+    <string name="label_family_name">Family Name</string>
+    <string name="hint_family_name">e.g. The Sharma Family</string>
+    <string name="label_admin_name">Your Name (Admin)</string>
+    <string name="hint_admin_name">e.g. Neel</string>
+    <string name="label_create_family_id">Custom Family ID</string>
+    <string name="action_generate_id">Generate</string>
+    <string name="label_confirm_password">Confirm Password</string>
+    <string name="label_approval_toggle">Require Admin approval to join</string>
+    <string name="label_directory_toggle">Private directory visible to members only</string>
+    <string name="action_create_family_preview">Complete Setup Preview</string>
+    <string name="action_back_to_login">Already have a Family ID? Sign In</string>
+    <string name="error_empty_family_name">Please enter a family name.</string>
+    <string name="error_empty_admin_name">Please enter your display name.</string>
+    <string name="error_password_mismatch">Passwords do not match.</string>
+
+    <!-- Navigation Tabs -->
+    <string name="nav_home">Home</string>
+    <string name="nav_calls">Calls</string>
+    <string name="nav_chats">Chats</string>
+    <string name="nav_family">Family</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_quick_actions">Quick Connect</string>
+    <string name="dashboard_family_circle">Family Circle</string>
+    <string name="dashboard_recent_activity">Recent Moments</string>
+    <string name="action_voice_call">Voice Call</string>
+    <string name="action_video_call">Video Call</string>
+    <string name="action_family_chat">Family Chat</string>
+    <string name="action_admin_setup">Admin Setup</string>
+
+    <!-- Calls -->
+    <string name="calls_title">Family Calls</string>
+    <string name="calls_preview_incoming">Preview Incoming Call</string>
+    <string name="calls_recent_history">Recent Call Log</string>
+    <string name="call_mute">Mute</string>
+    <string name="call_unmute">Unmute</string>
+    <string name="call_speaker">Speaker</string>
+    <string name="call_camera">Camera</string>
+    <string name="call_end">End</string>
+    <string name="call_answer">Answer</string>
+    <string name="call_decline">Decline</string>
+    <string name="call_quick_reply">I\'ll call right back</string>
+
+    <!-- Chats -->
+    <string name="chats_title">Family Chats</string>
+    <string name="chat_input_hint">Write a message to family…</string>
+    <string name="cd_send_message">Send message</string>
+    <string name="cd_attach_media">Attach media (Phase 2)</string>
+    <string name="cd_back">Navigate back</string>
+
+    <!-- Family -->
+    <string name="family_title">Family Members</string>
+    <string name="family_search_hint">Search family members…</string>
+    <string name="action_message">Message</string>
+    <string name="action_call">Call</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="theme_system">System Default</string>
+    <string name="theme_light">Light Mode</string>
+    <string name="theme_dark">Dark Mode</string>
+    <string name="settings_backend_checklist">Phase 2 Backend Checklist</string>
+    <string name="settings_sign_out">Return to Login</string>
+</resources>
