@@ -1,3 +1,4 @@
+import admin from "firebase-admin";
 import { getFirestore } from "../../lib/firebase-admin.js";
 import { requireApprovedMember } from "../../lib/auth-middleware.js";
 
@@ -47,7 +48,9 @@ async function profileHandler(req, res) {
       memberUpdates.photoUrl = photoUrl.trim();
     }
     if (typeof fcmToken === "string" && fcmToken.trim().length > 0) {
-      memberUpdates.fcmToken = fcmToken.trim();
+      const cleanToken = fcmToken.trim();
+      memberUpdates.fcmToken = cleanToken;
+      memberUpdates.fcmTokens = admin.firestore.FieldValue.arrayUnion(cleanToken);
     }
 
     if (Object.keys(memberUpdates).length > 0) {

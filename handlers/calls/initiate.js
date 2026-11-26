@@ -79,12 +79,21 @@ async function initiateHandler(req, res) {
       .doc(callId)
       .set(callData);
 
-    // Send high-priority data-only FCM push so Android wakes up & triggers FullScreenIntent even when app is closed
-    if (receiver.fcmToken) {
+    // Send high-priority data-only FCM push to ALL registered receiver devices
+    const tokenSet = new Set();
+    if (receiver.fcmToken) tokenSet.add(receiver.fcmToken);
+    if (Array.isArray(receiver.fcmTokens)) {
+      receiver.fcmTokens.forEach((t) => {
+        if (typeof t === "string" && t.trim().length > 0) tokenSet.add(t.trim());
+      });
+    }
+    const tokens = Array.from(tokenSet);
+
+    if (tokens.length > 0) {
       getFirebaseAdmin()
         .messaging()
-        .send({
-          token: receiver.fcmToken,
+        .sendEachForMulticast({
+          tokens,
           android: {
             priority: "high",
             ttl: 30000,
@@ -97,7 +106,7 @@ async function initiateHandler(req, res) {
             callType: cleanType,
             roomName,
             title: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call`,
-            body: `${name} is calling you on AAILA`,
+            body: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call from ${name}`,
           },
         })
         .catch(() => {});
