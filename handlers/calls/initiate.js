@@ -1,11 +1,13 @@
 import { v4 as uuidv4 } from "uuid";
 import { getFirebaseAdmin, getFirestore } from "../../lib/firebase-admin.js";
 import { requireApprovedMember } from "../../lib/auth-middleware.js";
+import { generateLiveKitToken } from "../../lib/livekit.js";
 
 /**
  * POST /api/calls/initiate
  *
- * Creates a real call record + LiveKit room name and notifies the receiver via FCM.
+ * Creates a real call record + LiveKit room + returns LiveKit token immediately (1 roundtrip!)
+ * and notifies the receiver via FCM.
  */
 async function initiateHandler(req, res) {
   if (req.method !== "POST") {
@@ -99,11 +101,23 @@ async function initiateHandler(req, res) {
         .catch(() => {});
     }
 
+    // Generate LiveKit token immediately to eliminate a 2nd network roundtrip
+    let livekit = null;
+    try {
+      const scopedRoomName = `${familyId}_${roomName}`;
+      const participantIdentity = `${familyId}_${uid}`;
+      livekit = await generateLiveKitToken(participantIdentity, name, scopedRoomName);
+    } catch (_lkErr) {
+      // Fallback: client can still request /api/livekit/token if needed
+    }
+
     return res.status(201).json({
       success: true,
       callId,
       roomName,
       status: "OFFERING",
+      livekitToken: livekit?.token || null,
+      livekitUrl: livekit?.url || null,
     });
   } catch (err) {
     console.error("Error initiating call:", err);
