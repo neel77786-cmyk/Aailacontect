@@ -139,9 +139,38 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error("Registration error:", err);
+
+    const msg = err?.message || "";
+    const code = err?.code;
+
+    if (msg.includes("Missing Firebase Admin SDK")) {
+      return res.status(500).json({
+        success: false,
+        error: "Server config error: Firebase Admin environment variables are missing in Vercel.",
+      });
+    }
+    if (msg.includes("JWT_SECRET")) {
+      return res.status(500).json({
+        success: false,
+        error: "Server config error: JWT_SECRET is missing in Vercel.",
+      });
+    }
+    if (msg.includes("PEM") || msg.includes("private key") || code === "app/invalid-credential") {
+      return res.status(500).json({
+        success: false,
+        error: "Firebase credential error: check FIREBASE_PRIVATE_KEY and FIREBASE_CLIENT_EMAIL in Vercel.",
+      });
+    }
+    if (code === 5 || msg.includes("NOT_FOUND") || msg.includes("database")) {
+      return res.status(500).json({
+        success: false,
+        error: "Cloud Firestore database not found. Create Firestore in Firebase Console first.",
+      });
+    }
+
     return res.status(500).json({
       success: false,
-      error: "Internal server error during registration.",
+      error: `Registration failed (${code || "server_error"}): ${msg || "Internal server error."}`,
     });
   }
 }
