@@ -1,22 +1,22 @@
 import express from "express";
 import cors from "cors";
-import healthHandler from "./api/health.js";
-import registerHandler from "./api/auth/register.js";
-import loginHandler from "./api/auth/login.js";
-import meHandler from "./api/auth/me.js";
-import logoutHandler from "./api/auth/logout.js";
-import passwordHandler from "./api/auth/password.js";
-import membersHandler from "./api/family/members.js";
-import memberByUidHandler from "./api/family/members/[uid].js";
-import invitesHandler from "./api/family/invites.js";
-import joinHandler from "./api/family/join.js";
-import profileHandler from "./api/family/profile.js";
-import threadsHandler from "./api/chats/threads.js";
-import messagesHandler from "./api/chats/messages.js";
-import historyHandler from "./api/calls/history.js";
-import initiateHandler from "./api/calls/initiate.js";
-import callByIdHandler from "./api/calls/[callId].js";
-import livekitTokenHandler from "./api/livekit/token.js";
+import healthHandler from "./handlers/health.js";
+import registerHandler from "./handlers/auth/register.js";
+import loginHandler from "./handlers/auth/login.js";
+import meHandler from "./handlers/auth/me.js";
+import logoutHandler from "./handlers/auth/logout.js";
+import passwordHandler from "./handlers/auth/password.js";
+import membersHandler from "./handlers/family/members.js";
+import memberByUidHandler from "./handlers/family/members/[uid].js";
+import invitesHandler from "./handlers/family/invites.js";
+import joinHandler from "./handlers/family/join.js";
+import profileHandler from "./handlers/family/profile.js";
+import threadsHandler from "./handlers/chats/threads.js";
+import messagesHandler from "./handlers/chats/messages.js";
+import historyHandler from "./handlers/calls/history.js";
+import initiateHandler from "./handlers/calls/initiate.js";
+import callByIdHandler from "./handlers/calls/[callId].js";
+import livekitTokenHandler from "./handlers/livekit/token.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,7 +24,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Route mapping matching Vercel serverless functions
+// Route mapping for all AAILA endpoints
 app.all("/api/health", (req, res) => healthHandler(req, res));
 app.all("/api/auth/register", (req, res) => registerHandler(req, res));
 app.all("/api/auth/login", (req, res) => loginHandler(req, res));
