@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isMemberOfFamily(familyId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)).data.status == 'APPROVED';
+    }
+
+    function isAdminOfFamily(familyId) {
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/families/$(familyId)).data.adminUid == request.auth.uid ||
+        get(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)).data.role == 'ADMIN'
+      );
+    }
+
+    // Family Space collection
+    match /families/{familyId} {
+      allow read: if isSignedIn() && (isMemberOfFamily(familyId) || resource.data.adminUid == request.auth.uid);
+      allow create: if isSignedIn();
+      allow update, delete: if isAdminOfFamily(familyId);
+
+      // Members subcollection
+      match /members/{memberUid} {
+        allow read: if isMemberOfFamily(familyId);
+        allow create, update, delete: if isAdminOfFamily(familyId) || request.auth.uid == memberUid;
+      }
+
+      // Chat threads subcollection
+      match /threads/{threadId} {
+        allow read, write: if isMemberOfFamily(familyId);
+
+        // Messages subcollection
+        match /messages/{messageId} {
+          allow read, write: if isMemberOfFamily(familyId);
+        }
+      }
+
+      // WebRTC Calls subcollection
+      match /calls/{callId} {
+        allow read, write: if isMemberOfFamily(familyId);
+
+        match /candidates/{candidateId} {
+          allow read, write: if isMemberOfFamily(familyId);
+        }
+      }
+    }
+  }
+}

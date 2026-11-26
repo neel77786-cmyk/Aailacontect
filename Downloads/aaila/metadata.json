@@ -1,0 +1,6 @@
+{
+  "name": "AAILA",
+  "description": "AAILA — Together, Always. A private family communication Android app.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

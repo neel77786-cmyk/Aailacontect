@@ -1,0 +1,25 @@
+import app from "./server.js";
+
+const PORT = process.env.PORT || 3000;
+
+// Start HTTP server when run directly (e.g. `node index.js`)
+if (process.argv[1] && process.argv[1].endsWith("index.js")) {
+  app.listen(PORT, () => {
+    console.log(`AAILA Backend listening on http://localhost:${PORT}`);
+  });
+}
+
+// Export Express app for Vercel / serverless entry point
+export default app;import app from "./server.js";
+
+const PORT = process.env.PORT || 3000;
+
+// Start HTTP server when run directly (e.g. `node index.js`)
+if (process.argv[1] && process.argv[1].endsWith("index.js")) {
+  app.listen(PORT, () => {
+    console.log(`AAILA Backend listening on http://localhost:${PORT}`);
+  });
+}
+
+// Export Express app for Vercel / serverless entry point
+export default app;
