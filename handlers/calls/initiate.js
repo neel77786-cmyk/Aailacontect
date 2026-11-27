@@ -1,3 +1,4 @@
+import admin from "firebase-admin";
 import { v4 as uuidv4 } from "uuid";
 import { getFirebaseAdmin, getFirestore } from "../../lib/firebase-admin.js";
 import { requireApprovedMember } from "../../lib/auth-middleware.js";
@@ -51,6 +52,8 @@ async function initiateHandler(req, res) {
     }
 
     const receiver = memberDoc.data();
+    const safeCallerName =
+      typeof name === "string" && name.trim().length > 0 ? name.trim() : "Family Member";
     const callId = uuidv4();
     const roomName = `call_${callId.replace(/-/g, "").substring(0, 12)}`;
     const now = new Date().toISOString();
@@ -59,7 +62,7 @@ async function initiateHandler(req, res) {
       callId,
       familyId,
       callerId: uid,
-      callerName: name,
+      callerName: safeCallerName,
       receiverId: targetMemberId,
       receiverName: receiver.name || "Family Member",
       receiverInitials: receiver.initials || "FM",
@@ -102,22 +105,46 @@ async function initiateHandler(req, res) {
             },
             data: {
               type: "call",
-              callId,
-              callerId: uid,
-              callerName: name,
-              callType: cleanType,
-              roomName,
+              callId: String(callId),
+              callerId: String(uid),
+              callerName: safeCallerName,
+              callType: String(cleanType),
+              roomName: String(roomName),
               title: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call`,
-              body: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call from ${name}`,
+              body: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call from ${safeCallerName}`,
             },
           });
         fcmResult = { successCount: resp.successCount, failureCount: resp.failureCount };
         if (resp.failureCount > 0) {
-          const errs = resp.responses
-            .filter((r) => !r.success)
-            .map((r) => r.error?.code || r.error?.message)
-            .slice(0, 3);
+          const invalidTokens = [];
+          const errs = [];
+          resp.responses.forEach((r, idx) => {
+            if (!r.success) {
+              const code = r.error?.code || r.error?.message || "unknown";
+              if (errs.length < 3) errs.push(code);
+              if (
+                code === "messaging/registration-token-not-registered" ||
+                code === "messaging/invalid-registration-token"
+              ) {
+                invalidTokens.push(tokens[idx]);
+              }
+            }
+          });
           console.error(`[CALL] FCM multicast partial failure callId=${callId}:`, errs);
+          if (invalidTokens.length > 0) {
+            const memberRef = firestore
+              .collection("families")
+              .doc(familyId)
+              .collection("members")
+              .doc(targetMemberId);
+            const cleanup = {
+              fcmTokens: admin.firestore.FieldValue.arrayRemove(...invalidTokens),
+            };
+            if (invalidTokens.includes(receiver.fcmToken)) {
+              cleanup.fcmToken = null;
+            }
+            await memberRef.update(cleanup).catch(() => {});
+          }
         }
       } catch (fcmErr) {
         console.error(`[CALL] FCM multicast error callId=${callId}:`, fcmErr?.message || fcmErr);
@@ -129,7 +156,7 @@ async function initiateHandler(req, res) {
     try {
       const scopedRoomName = `${familyId}_${roomName}`;
       const participantIdentity = `${familyId}_${uid}`;
-      livekit = await generateLiveKitToken(participantIdentity, name, scopedRoomName);
+      livekit = await generateLiveKitToken(participantIdentity, safeCallerName, scopedRoomName);
     } catch (lkErr) {
       console.error("[CALL] LiveKit token generation failed during initiate:", lkErr?.message || lkErr);
       // Fallback: client can still request /api/livekit/token if needed
