@@ -92,18 +92,21 @@ async function callByIdHandler(req, res) {
           }
           const tokens = Array.from(tokenSet);
           if (tokens.length > 0) {
-            getFirebaseAdmin()
-              .messaging()
-              .sendEachForMulticast({
-                tokens,
-                android: { priority: "high", ttl: 15000 },
-                data: {
-                  type: "call_cancel",
-                  callId,
-                  reason: cleanStatus,
-                },
-              })
-              .catch(() => {});
+            try {
+              await getFirebaseAdmin()
+                .messaging()
+                .sendEachForMulticast({
+                  tokens,
+                  android: { priority: "high", ttl: 15000 },
+                  data: {
+                    type: "call_cancel",
+                    callId,
+                    reason: cleanStatus,
+                  },
+                });
+            } catch (fcmErr) {
+              console.error(`[CALL] FCM cancel error callId=${callId}:`, fcmErr?.message || fcmErr);
+            }
           }
         }
       }

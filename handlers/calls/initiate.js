@@ -89,27 +89,39 @@ async function initiateHandler(req, res) {
     }
     const tokens = Array.from(tokenSet);
 
+    let fcmResult = { successCount: 0, failureCount: 0 };
     if (tokens.length > 0) {
-      getFirebaseAdmin()
-        .messaging()
-        .sendEachForMulticast({
-          tokens,
-          android: {
-            priority: "high",
-            ttl: 30000,
-          },
-          data: {
-            type: "call",
-            callId,
-            callerId: uid,
-            callerName: name,
-            callType: cleanType,
-            roomName,
-            title: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call`,
-            body: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call from ${name}`,
-          },
-        })
-        .catch(() => {});
+      try {
+        const resp = await getFirebaseAdmin()
+          .messaging()
+          .sendEachForMulticast({
+            tokens,
+            android: {
+              priority: "high",
+              ttl: 30000,
+            },
+            data: {
+              type: "call",
+              callId,
+              callerId: uid,
+              callerName: name,
+              callType: cleanType,
+              roomName,
+              title: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call`,
+              body: `Incoming ${cleanType === "VIDEO" ? "Video" : "Voice"} Call from ${name}`,
+            },
+          });
+        fcmResult = { successCount: resp.successCount, failureCount: resp.failureCount };
+        if (resp.failureCount > 0) {
+          const errs = resp.responses
+            .filter((r) => !r.success)
+            .map((r) => r.error?.code || r.error?.message)
+            .slice(0, 3);
+          console.error(`[CALL] FCM multicast partial failure callId=${callId}:`, errs);
+        }
+      } catch (fcmErr) {
+        console.error(`[CALL] FCM multicast error callId=${callId}:`, fcmErr?.message || fcmErr);
+      }
     }
 
     // Generate LiveKit token immediately to eliminate a 2nd network roundtrip
@@ -124,7 +136,7 @@ async function initiateHandler(req, res) {
     }
 
     console.log(
-      `[CALL] initiate family=${familyId} caller=${uid} receiver=${targetMemberId} type=${cleanType} callId=${callId} fcmTokens=${tokens.length} livekit=${Boolean(livekit?.token)}`
+      `[CALL] initiate family=${familyId} caller=${uid} receiver=${targetMemberId} type=${cleanType} callId=${callId} fcmTokens=${tokens.length} fcmSent=${fcmResult.successCount}/${tokens.length} livekit=${Boolean(livekit?.token)}`
     );
 
     return res.status(201).json({
