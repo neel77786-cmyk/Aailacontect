@@ -7,8 +7,8 @@ import { validateFamilyId, validatePassword, collectErrors } from "../../lib/val
  * POST /api/auth/login
  *
  * Supports:
- * 1. Family Admin login: { familyId, password } (verifies via Firebase Auth REST API)
- * 2. Family Member login: { familyId, memberIdentifier, password } (verifies via bcryptjs hash in Firestore)
+ * 1. Personal User ID + Password login: { userId: "USR-XXXXXX", password }
+ * 2. Legacy/Family ID + Password login: { familyId: "FAM-XXXXXX", password, memberIdentifier? }
  */
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -17,10 +17,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { familyId, password, memberIdentifier } = req.body || {};
+    const { userId, familyId, password, memberIdentifier } = req.body || {};
+    const identifier = (userId || familyId || "").trim().toUpperCase();
 
     const errors = collectErrors([
-      validateFamilyId(familyId),
+      validateFamilyId(identifier),
       validatePassword(password),
     ]);
 
@@ -28,13 +29,68 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, errors });
     }
 
-    const cleanFamilyId = familyId.trim().toUpperCase();
     const firestore = getFirestore();
 
-    const familyDoc = await firestore
-      .collection("families")
-      .doc(cleanFamilyId)
-      .get();
+    // Case 1: Login with Personal User ID (USR-XXXXXX)
+    if (identifier.startsWith("USR-")) {
+      const userDoc = await firestore.collection("users").doc(identifier).get();
+      if (!userDoc.exists) {
+        return res.status(401).json({
+          success: false,
+          error: "Invalid User ID or password.",
+        });
+      }
+
+      const userData = userDoc.data();
+      const matches = await bcrypt.compare(password, userData.passwordHash || "");
+      if (!matches) {
+        return res.status(401).json({
+          success: false,
+          error: "Invalid User ID or password.",
+        });
+      }
+
+      const targetFamilyId = userData.ownFamilyId;
+      const uid = userData.uid;
+      const familyDoc = await firestore.collection("families").doc(targetFamilyId).get();
+      const familyData = familyDoc.exists ? familyDoc.data() : {};
+
+      const memberRef = firestore
+        .collection("families")
+        .doc(targetFamilyId)
+        .collection("members")
+        .doc(uid);
+      const memberDoc = await memberRef.get();
+      const memberData = memberDoc.exists ? memberDoc.data() : {};
+      const role = memberData.role || "ADMIN";
+
+      if (memberDoc.exists) {
+        await memberRef.update({
+          lastSeen: new Date().toISOString(),
+          onlineStatus: "AVAILABLE",
+        });
+      }
+
+      const token = signToken(uid, targetFamilyId, role);
+
+      return res.status(200).json({
+        success: true,
+        userId: identifier,
+        authUid: uid,
+        familyId: targetFamilyId,
+        familyJoinId: targetFamilyId,
+        familyName: familyData.familyName || "Family Space",
+        adminName: familyData.adminName || userData.name || "Admin",
+        memberName: userData.name || "Member",
+        role,
+        token,
+        expiresIn: process.env.JWT_EXPIRY || "24h",
+      });
+    }
+
+    // Case 2: Login with Family ID (existing behavior preserved)
+    const cleanFamilyId = identifier;
+    const familyDoc = await firestore.collection("families").doc(cleanFamilyId).get();
 
     if (!familyDoc.exists) {
       return res.status(404).json({
@@ -46,7 +102,7 @@ export default async function handler(req, res) {
     const familyData = familyDoc.data();
     const cleanMemberId = memberIdentifier?.trim();
 
-    // Case A: Member login with memberIdentifier (name or memberId)
+    // Case 2A: Individual member login inside a family
     if (cleanMemberId && cleanMemberId.toUpperCase() !== "ADMIN") {
       const membersSnap = await firestore
         .collection("families")
@@ -59,6 +115,7 @@ export default async function handler(req, res) {
         return (
           doc.id.toLowerCase() === cleanMemberId.toLowerCase() ||
           (d.memberId && d.memberId.toLowerCase() === cleanMemberId.toLowerCase()) ||
+          (d.userCode && d.userCode.toLowerCase() === cleanMemberId.toLowerCase()) ||
           (d.name && d.name.toLowerCase() === cleanMemberId.toLowerCase())
         );
       });
@@ -74,7 +131,7 @@ export default async function handler(req, res) {
       if (!memberData.passwordHash) {
         return res.status(401).json({
           success: false,
-          error: "This member account uses Admin login. Leave Member Name empty to sign in as Admin.",
+          error: "This account uses User ID or Admin login. Leave Member Name empty to sign in.",
         });
       }
 
@@ -109,8 +166,10 @@ export default async function handler(req, res) {
 
       return res.status(200).json({
         success: true,
-        userId: uid,
+        userId: memberData.userCode || uid,
+        authUid: uid,
         familyId: cleanFamilyId,
+        familyJoinId: cleanFamilyId,
         familyName: familyData.familyName || "Family Space",
         adminName: familyData.adminName || "Admin",
         memberName: memberData.name || "Member",
@@ -120,11 +179,10 @@ export default async function handler(req, res) {
       });
     }
 
-    // Case B: Admin login (existing behavior, 100% backward compatible)
+    // Case 2B: Admin login via Firebase Auth
     const syntheticEmail = `admin.${cleanFamilyId.toLowerCase()}@aaila.family`;
     const auth = getAuth();
     const firebaseApiKey = process.env.FIREBASE_WEB_API_KEY?.trim();
-
     let firebaseUid;
 
     if (firebaseApiKey) {
@@ -142,30 +200,9 @@ export default async function handler(req, res) {
       );
 
       if (!authResponse.ok) {
-        const errorData = await authResponse.json().catch(() => ({}));
-        const errorMessage = errorData?.error?.message || "AUTH_FAILED";
-
-        if (
-          errorMessage === "EMAIL_NOT_FOUND" ||
-          errorMessage === "INVALID_PASSWORD" ||
-          errorMessage === "INVALID_LOGIN_CREDENTIALS"
-        ) {
-          return res.status(401).json({
-            success: false,
-            error: "Invalid Family ID or password.",
-          });
-        }
-
-        if (errorMessage === "USER_DISABLED") {
-          return res.status(403).json({
-            success: false,
-            error: "This account has been disabled. Contact your family admin.",
-          });
-        }
-
         return res.status(401).json({
           success: false,
-          error: "Authentication failed. Please check your credentials.",
+          error: "Invalid Family ID or password.",
         });
       }
 
@@ -201,12 +238,10 @@ export default async function handler(req, res) {
     }
 
     const memberData = memberDoc.data();
-    const memberStatus = memberData.status || "PENDING";
-
-    if (memberStatus !== "APPROVED") {
+    if ((memberData.status || "PENDING") !== "APPROVED") {
       return res.status(403).json({
         success: false,
-        error: `Your access is currently "${memberStatus}". Contact your family admin.`,
+        error: `Your access is currently "${memberData.status}". Contact your family admin.`,
       });
     }
 
@@ -221,8 +256,10 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       success: true,
-      userId: firebaseUid,
+      userId: memberData.userCode || familyData.adminUserCode || firebaseUid,
+      authUid: firebaseUid,
       familyId: cleanFamilyId,
+      familyJoinId: cleanFamilyId,
       familyName: familyData.familyName || "Family Space",
       adminName: familyData.adminName || "Admin",
       memberName: memberData.name || familyData.adminName || "Admin",

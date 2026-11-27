@@ -1,7 +1,8 @@
+import admin from "firebase-admin";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import { getFirestore } from "../../lib/firebase-admin.js";
-import { signToken } from "../../lib/auth-middleware.js";
+import { requireAuth, signToken } from "../../lib/auth-middleware.js";
 import {
   validateFamilyId,
   validateName,
@@ -12,11 +13,11 @@ import {
 /**
  * POST /api/family/join
  *
- * Allows an invited member to register with Family ID + Invite Code + Name + Password.
- * - Verifies invite code exists, is active, not expired, and under maxUses
- * - Prevents duplicate member names in the same family
- * - Hashes password with bcryptjs
- * - Sets status to PENDING if requireAdminApproval is true, else APPROVED
+ * Supports TWO flows:
+ * 1. Authenticated user joining another family with ONLY `familyJoinId` (no new account needed!)
+ *    - Preserves ownership of their own Family Space
+ *    - Sends a join request (status PENDING if requireAdminApproval, else APPROVED)
+ * 2. Legacy invite-code registration flow (preserved for backward compatibility)
  */
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -24,6 +25,121 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: "Method not allowed." });
   }
 
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return requireAuth(req, res, () => handleAuthenticatedJoin(req, res));
+  }
+
+  return handleLegacyInviteJoin(req, res);
+}
+
+async function handleAuthenticatedJoin(req, res) {
+  try {
+    const { uid, familyId: currentFamilyId } = req.user;
+    const rawTarget = req.body?.familyJoinId || req.body?.familyId;
+    const err = validateFamilyId(rawTarget);
+    if (err) {
+      return res.status(400).json({ success: false, error: err });
+    }
+
+    const targetFamilyId = rawTarget.trim().toUpperCase();
+    if (targetFamilyId === currentFamilyId) {
+      return res.status(400).json({
+        success: false,
+        error: "You are already a member of this Family Space.",
+      });
+    }
+
+    const firestore = getFirestore();
+    const targetFamilyRef = firestore.collection("families").doc(targetFamilyId);
+    const targetFamilyDoc = await targetFamilyRef.get();
+
+    if (!targetFamilyDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        error: `Family Join ID "${targetFamilyId}" does not exist.`,
+      });
+    }
+
+    const targetFamilyData = targetFamilyDoc.data();
+
+    // Check if already a member or pending in target family
+    const existingMemberDoc = await targetFamilyRef.collection("members").doc(uid).get();
+    if (existingMemberDoc.exists) {
+      const existingStatus = existingMemberDoc.data().status;
+      return res.status(409).json({
+        success: false,
+        error:
+          existingStatus === "PENDING"
+            ? `Your join request to "${targetFamilyData.familyName}" is already pending admin approval.`
+            : `You are already a member of "${targetFamilyData.familyName}".`,
+      });
+    }
+
+    // Look up caller's profile from current family or /users
+    const currentMemberDoc = await firestore
+      .collection("families")
+      .doc(currentFamilyId)
+      .collection("members")
+      .doc(uid)
+      .get();
+
+    const callerData = currentMemberDoc.exists ? currentMemberDoc.data() : {};
+    const callerName = callerData.name || "Family Member";
+    const userCode = callerData.userCode || uid;
+
+    const needsApproval = targetFamilyData.requireAdminApproval ?? true;
+    const status = needsApproval ? "PENDING" : "APPROVED";
+    const now = new Date().toISOString();
+
+    await targetFamilyRef.collection("members").doc(uid).set({
+      uid,
+      userCode,
+      memberId: userCode,
+      name: callerName,
+      relationship: "Family Member",
+      role: "MEMBER",
+      status,
+      onlineStatus: status === "APPROVED" ? "AVAILABLE" : "OFFLINE",
+      statusNote: status === "APPROVED" ? "Joined family space" : "Waiting for admin approval",
+      initials: callerName.substring(0, 2).toUpperCase(),
+      avatarColorIndex: callerName.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 6,
+      lastSeen: now,
+      createdAt: now,
+    });
+
+    if (userCode.startsWith("USR-")) {
+      await firestore
+        .collection("users")
+        .doc(userCode)
+        .set(
+          { families: admin.firestore.FieldValue.arrayUnion(targetFamilyId) },
+          { merge: true }
+        )
+        .catch(() => {});
+    }
+
+    return res.status(201).json({
+      success: true,
+      userId: userCode,
+      familyId: targetFamilyId,
+      familyName: targetFamilyData.familyName || "Family Space",
+      status,
+      requiresApproval: needsApproval,
+      message: needsApproval
+        ? `Join request sent to ${targetFamilyData.familyName || targetFamilyId}! Waiting for admin approval.`
+        : `You joined ${targetFamilyData.familyName || targetFamilyId}!`,
+    });
+  } catch (err) {
+    console.error("Authenticated join error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to send join request.",
+    });
+  }
+}
+
+async function handleLegacyInviteJoin(req, res) {
   try {
     const {
       familyId,
@@ -54,7 +170,6 @@ export default async function handler(req, res) {
 
     const familyRef = firestore.collection("families").doc(cleanFamilyId);
     const familyDoc = await familyRef.get();
-
     if (!familyDoc.exists) {
       return res.status(404).json({
         success: false,
@@ -63,59 +178,21 @@ export default async function handler(req, res) {
     }
 
     const familyData = familyDoc.data();
-
-    // Verify invite code
     const inviteRef = familyRef.collection("invites").doc(cleanCode);
     const inviteDoc = await inviteRef.get();
-
-    if (!inviteDoc.exists) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid invitation code.",
-      });
+    if (!inviteDoc.exists || !inviteDoc.data().active) {
+      return res.status(400).json({ success: false, error: "Invalid or revoked invitation code." });
     }
 
     const inviteData = inviteDoc.data();
-    if (!inviteData.active) {
-      return res.status(400).json({
-        success: false,
-        error: "This invitation code has been revoked.",
-      });
-    }
-
     if (inviteData.expiresAt && new Date(inviteData.expiresAt).getTime() < Date.now()) {
-      return res.status(400).json({
-        success: false,
-        error: "This invitation code has expired. Ask your Family Admin for a new one.",
-      });
+      return res.status(400).json({ success: false, error: "Invitation code expired." });
     }
-
     if ((inviteData.usedCount || 0) >= (inviteData.maxUses || 1)) {
-      return res.status(400).json({
-        success: false,
-        error: "This invitation code has reached its maximum usage limit.",
-      });
+      return res.status(400).json({ success: false, error: "Invitation usage limit reached." });
     }
-
-    // Prevent duplicate member name in the same family
-    const existingMembersSnap = await familyRef.collection("members").get();
-    const duplicate = existingMembersSnap.docs.some((doc) => {
-      const existingName = doc.data().name || "";
-      return existingName.trim().toLowerCase() === cleanName.toLowerCase();
-    });
-
-    if (duplicate) {
-      return res.status(409).json({
-        success: false,
-        error: `A member named "${cleanName}" already exists in ${cleanFamilyId}. Use a distinct name or log in instead.`,
-      });
-    }
-
-    const allowedRoles = ["PARENT", "SIBLING", "GRANDPARENT", "MEMBER"];
-    const resolvedRole = allowedRoles.includes(role.toUpperCase()) ? role.toUpperCase() : "MEMBER";
 
     const memberUid = `mem_${uuidv4().replace(/-/g, "").substring(0, 20)}`;
-    const memberId = `${cleanName.replace(/[^A-Za-z0-9]/g, "").toUpperCase().substring(0, 6)}-${Math.floor(100 + Math.random() * 900)}`;
     const passwordHash = await bcrypt.hash(password, 10);
     const needsApproval = familyData.requireAdminApproval ?? true;
     const status = needsApproval ? "PENDING" : "APPROVED";
@@ -123,10 +200,10 @@ export default async function handler(req, res) {
 
     const memberData = {
       uid: memberUid,
-      memberId,
+      memberId: memberUid,
       name: cleanName,
       relationship: relationship.trim() || "Family Member",
-      role: resolvedRole,
+      role: "MEMBER",
       status,
       onlineStatus: status === "APPROVED" ? "AVAILABLE" : "OFFLINE",
       statusNote: status === "APPROVED" ? "Joined family space" : "Waiting for admin approval",
@@ -135,7 +212,6 @@ export default async function handler(req, res) {
       passwordHash,
       lastSeen: now,
       createdAt: now,
-      joinedViaCode: cleanCode,
     };
 
     const batch = firestore.batch();
@@ -143,26 +219,21 @@ export default async function handler(req, res) {
     batch.update(inviteRef, { usedCount: (inviteData.usedCount || 0) + 1 });
     await batch.commit();
 
-    const token = status === "APPROVED" ? signToken(memberUid, cleanFamilyId, resolvedRole) : null;
-
+    const token = status === "APPROVED" ? signToken(memberUid, cleanFamilyId, "MEMBER") : null;
     return res.status(201).json({
       success: true,
       userId: memberUid,
-      memberId,
       familyId: cleanFamilyId,
       familyName: familyData.familyName || "Family Space",
       status,
       requiresApproval: needsApproval,
       token,
       message: needsApproval
-        ? "Join request sent! Ask your Family Admin to approve your request, then log in."
+        ? "Join request sent! Ask your Family Admin to approve your request."
         : "Welcome to the family!",
     });
   } catch (err) {
     console.error("Join family error:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to process join request.",
-    });
+    return res.status(500).json({ success: false, error: "Failed to process join request." });
   }
 }

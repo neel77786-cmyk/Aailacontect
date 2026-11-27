@@ -45,8 +45,10 @@ async function meHandler(req, res) {
     return res.status(200).json({
       success: true,
       user: {
-        userId: uid,
+        userId: memberData.userCode || uid,
+        authUid: uid,
         familyId,
+        familyJoinId: familyId,
         role,
         name: memberData.name || "Family Member",
         relationship: memberData.relationship || "Member",
@@ -58,6 +60,7 @@ async function meHandler(req, res) {
       },
       family: {
         familyId,
+        familyJoinId: familyId,
         familyName: familyData.familyName || "Family Space",
         adminName: familyData.adminName || "Admin",
         requireAdminApproval: familyData.requireAdminApproval ?? true,

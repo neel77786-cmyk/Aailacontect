@@ -6,6 +6,7 @@ import loginHandler from "./handlers/auth/login.js";
 import meHandler from "./handlers/auth/me.js";
 import logoutHandler from "./handlers/auth/logout.js";
 import passwordHandler from "./handlers/auth/password.js";
+import switchFamilyHandler from "./handlers/auth/switch-family.js";
 import membersHandler from "./handlers/family/members.js";
 import memberByUidHandler from "./handlers/family/members/[uid].js";
 import invitesHandler from "./handlers/family/invites.js";
@@ -31,6 +32,7 @@ app.all("/api/auth/login", (req, res) => loginHandler(req, res));
 app.all("/api/auth/me", (req, res) => meHandler(req, res));
 app.all("/api/auth/logout", (req, res) => logoutHandler(req, res));
 app.all("/api/auth/password", (req, res) => passwordHandler(req, res));
+app.all("/api/auth/switch-family", (req, res) => switchFamilyHandler(req, res));
 app.all("/api/family/members", (req, res) => membersHandler(req, res));
 app.all("/api/family/members/:uid", (req, res) => {
   req.query = { ...req.query, uid: req.params.uid };

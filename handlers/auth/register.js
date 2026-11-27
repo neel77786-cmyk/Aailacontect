@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import bcrypt from "bcryptjs";
 import { getAuth, getFirestore } from "../../lib/firebase-admin.js";
 import { signToken } from "../../lib/auth-middleware.js";
 import {
@@ -7,13 +9,27 @@ import {
   collectErrors,
 } from "../../lib/validators.js";
 
+const ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateCode(prefix, length = 6) {
+  const bytes = crypto.randomBytes(length);
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
+  }
+  return `${prefix}-${out}`;
+}
+
 /**
  * POST /api/auth/register
  *
- * Creates a new Family Space with an admin account.
- * - Creates a Firebase Auth user with a synthetic email
- * - Creates Firestore documents for the family and admin member
- * - Returns a signed JWT session token
+ * Simple 3-field registration: { familyName, adminName, password }
+ * (Also accepts optional legacy `familyId` if provided.)
+ *
+ * Automatically generates:
+ * - Unique personal User ID (USR-XXXXXX)
+ * - Unique Family Join ID (FAM-XXXXXX)
+ * Uses a Firestore transaction to verify uniqueness before saving.
  */
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -31,50 +47,85 @@ export default async function handler(req, res) {
       privateDirectoryOnly = true,
     } = req.body || {};
 
-    // Validate inputs
-    const errors = collectErrors([
+    const validationList = [
       validateName(familyName, "Family name"),
-      validateName(adminName, "Admin name"),
-      validateFamilyId(familyId),
+      validateName(adminName, "Your name"),
       validatePassword(password),
-    ]);
+    ];
+    if (familyId && typeof familyId === "string" && familyId.trim().isNotEmpty !== false) {
+      validationList.push(validateFamilyId(familyId));
+    }
 
+    const errors = collectErrors(validationList);
     if (errors) {
       return res.status(400).json({ success: false, errors });
     }
 
-    const cleanFamilyId = familyId.trim().toUpperCase();
-    const syntheticEmail = `admin.${cleanFamilyId.toLowerCase()}@aaila.family`;
-
+    const cleanFamilyName = familyName.trim();
+    const cleanAdminName = adminName.trim();
     const auth = getAuth();
     const firestore = getFirestore();
 
-    // Check if family already exists
-    const familyDoc = await firestore
-      .collection("families")
-      .doc(cleanFamilyId)
-      .get();
+    // Hash password securely with bcryptjs
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    if (familyDoc.exists) {
-      return res.status(409).json({
+    // Generate collision-resistant unique User ID and Family Join ID
+    let userCode = generateCode("USR", 6);
+    let cleanFamilyId = familyId?.trim()
+      ? familyId.trim().toUpperCase()
+      : generateCode("FAM", 6);
+
+    // Reserve both IDs atomically in a Firestore transaction
+    let reserved = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const userRef = firestore.collection("users").doc(userCode);
+      const famRef = firestore.collection("families").doc(cleanFamilyId);
+
+      const ok = await firestore.runTransaction(async (tx) => {
+        const [uDoc, fDoc] = await Promise.all([tx.get(userRef), tx.get(famRef)]);
+        if (uDoc.exists) {
+          userCode = generateCode("USR", 6);
+          return false;
+        }
+        if (fDoc.exists) {
+          if (familyId?.trim()) {
+            throw Object.assign(new Error(`Family Space "${cleanFamilyId}" already exists.`), {
+              statusCode: 409,
+            });
+          }
+          cleanFamilyId = generateCode("FAM", 6);
+          return false;
+        }
+        return true;
+      });
+
+      if (ok) {
+        reserved = true;
+        break;
+      }
+    }
+
+    if (!reserved) {
+      return res.status(503).json({
         success: false,
-        error: `Family Space "${cleanFamilyId}" already exists. Use login instead.`,
+        error: "Could not allocate unique IDs. Please try again.",
       });
     }
 
-    // Create Firebase Auth user
+    const syntheticEmail = `admin.${cleanFamilyId.toLowerCase()}@aaila.family`;
+
     let userRecord;
     try {
       userRecord = await auth.createUser({
         email: syntheticEmail,
-        password: password,
-        displayName: adminName.trim(),
+        password,
+        displayName: cleanAdminName,
       });
     } catch (authErr) {
       if (authErr.code === "auth/email-already-exists") {
         return res.status(409).json({
           success: false,
-          error: "An admin account for this Family ID already exists.",
+          error: "An account for this Family ID already exists.",
         });
       }
       throw authErr;
@@ -83,43 +134,52 @@ export default async function handler(req, res) {
     const uid = userRecord.uid;
     const now = new Date().toISOString();
 
-    // Create family document
+    const userAccountData = {
+      uid,
+      userCode,
+      name: cleanAdminName,
+      passwordHash,
+      ownFamilyId: cleanFamilyId,
+      families: [cleanFamilyId],
+      createdAt: now,
+      updatedAt: now,
+    };
+
     const familyData = {
       familyId: cleanFamilyId,
-      familyName: familyName.trim(),
-      adminName: adminName.trim(),
+      familyJoinId: cleanFamilyId,
+      familyName: cleanFamilyName,
+      adminName: cleanAdminName,
       adminUid: uid,
+      adminUserCode: userCode,
       requireAdminApproval,
       privateDirectoryOnly,
       createdAt: now,
       updatedAt: now,
     };
 
-    // Create admin member document
     const memberData = {
       uid,
-      memberId: "ADMIN",
-      name: adminName.trim(),
+      userCode,
+      memberId: userCode,
+      name: cleanAdminName,
       relationship: "Family Admin",
       role: "ADMIN",
       status: "APPROVED",
       onlineStatus: "AVAILABLE",
       statusNote: "Family Organizer",
-      initials: adminName.trim().substring(0, 2).toUpperCase(),
-      avatarColorIndex: 0,
+      initials: cleanAdminName.substring(0, 2).toUpperCase(),
+      avatarColorIndex: cleanAdminName.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 6,
       lastSeen: now,
       createdAt: now,
     };
 
-    // Write family, admin member, and default Family Circle group thread in a batch
+    // Write user account, family space, admin member, and default group thread atomically
     const batch = firestore.batch();
+    batch.set(firestore.collection("users").doc(userCode), userAccountData);
     batch.set(firestore.collection("families").doc(cleanFamilyId), familyData);
     batch.set(
-      firestore
-        .collection("families")
-        .doc(cleanFamilyId)
-        .collection("members")
-        .doc(uid),
+      firestore.collection("families").doc(cleanFamilyId).collection("members").doc(uid),
       memberData
     );
     batch.set(
@@ -130,7 +190,7 @@ export default async function handler(req, res) {
         .doc("thread_family_circle"),
       {
         id: "thread_family_circle",
-        title: `${familyName.trim()} Circle`,
+        title: `${cleanFamilyName} Circle`,
         subtitle: "Private Family Group",
         memberId: null,
         isGroup: true,
@@ -142,20 +202,24 @@ export default async function handler(req, res) {
     );
     await batch.commit();
 
-    // Sign session JWT
     const token = signToken(uid, cleanFamilyId, "ADMIN");
 
     return res.status(201).json({
       success: true,
-      userId: uid,
+      userId: userCode,
+      authUid: uid,
       familyId: cleanFamilyId,
-      familyName: familyName.trim(),
-      adminName: adminName.trim(),
+      familyJoinId: cleanFamilyId,
+      familyName: cleanFamilyName,
+      adminName: cleanAdminName,
       role: "ADMIN",
       token,
       expiresIn: process.env.JWT_EXPIRY || "24h",
     });
   } catch (err) {
+    if (err.statusCode === 409) {
+      return res.status(409).json({ success: false, error: err.message });
+    }
     console.error("Registration error:", err);
 
     const msg = err?.message || "";
