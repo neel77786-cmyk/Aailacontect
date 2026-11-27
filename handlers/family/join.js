@@ -62,6 +62,19 @@ async function handleAuthenticatedJoin(req, res) {
     }
 
     const targetFamilyData = targetFamilyDoc.data();
+    const memberUnit = Number(targetFamilyData.memberUnit || 0);
+    if (memberUnit > 0) {
+      const approvedSnap = await targetFamilyRef
+        .collection("members")
+        .where("status", "==", "APPROVED")
+        .get();
+      if (approvedSnap.size >= memberUnit) {
+        return res.status(403).json({
+          success: false,
+          error: `Family member unit limit (${memberUnit}) is full. Ask the Family Admin to increase the Family Member Unit.`,
+        });
+      }
+    }
 
     // Check if already a member or pending in target family
     const existingMemberDoc = await targetFamilyRef.collection("members").doc(uid).get();
@@ -178,6 +191,19 @@ async function handleLegacyInviteJoin(req, res) {
     }
 
     const familyData = familyDoc.data();
+    const memberUnit = Number(familyData.memberUnit || 0);
+    if (memberUnit > 0) {
+      const approvedSnap = await familyRef
+        .collection("members")
+        .where("status", "==", "APPROVED")
+        .get();
+      if (approvedSnap.size >= memberUnit) {
+        return res.status(403).json({
+          success: false,
+          error: `Family member unit limit (${memberUnit}) is full. Ask the Family Admin to increase the Family Member Unit.`,
+        });
+      }
+    }
     const inviteRef = familyRef.collection("invites").doc(cleanCode);
     const inviteDoc = await inviteRef.get();
     if (!inviteDoc.exists || !inviteDoc.data().active) {

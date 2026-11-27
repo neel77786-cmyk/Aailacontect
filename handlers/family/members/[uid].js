@@ -79,12 +79,26 @@ async function memberByUidHandler(req, res) {
 
     const updates = {};
     if (status) {
-      updates.status = status;
       if (status === "APPROVED") {
+        const familyRef = firestore.collection("families").doc(familyId);
+        const [famDoc, targetDoc, approvedSnap] = await Promise.all([
+          familyRef.get(),
+          memberRef.get(),
+          familyRef.collection("members").where("status", "==", "APPROVED").get(),
+        ]);
+        const memberUnit = Number(famDoc.exists ? famDoc.data().memberUnit || 0 : 0);
+        const alreadyApproved = targetDoc.exists && targetDoc.data().status === "APPROVED";
+        if (memberUnit > 0 && !alreadyApproved && approvedSnap.size >= memberUnit) {
+          return res.status(403).json({
+            success: false,
+            error: `Family member unit limit (${memberUnit}) reached. Increase Family Member Unit in Settings to approve more members.`,
+          });
+        }
         updates.onlineStatus = "AVAILABLE";
         updates.statusNote = "Active in family";
         updates.lastSeen = new Date().toISOString();
       }
+      updates.status = status;
     }
     if (memberRole) updates.role = memberRole;
     if (onlineStatus) updates.onlineStatus = onlineStatus;

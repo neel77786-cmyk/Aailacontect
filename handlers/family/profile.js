@@ -24,6 +24,7 @@ async function profileHandler(req, res) {
     fcmToken,
     requireAdminApproval,
     privateDirectoryOnly,
+    memberUnit,
   } = req.body || {};
 
   const firestore = getFirestore();
@@ -59,7 +60,11 @@ async function profileHandler(req, res) {
     }
 
     // Admin-only family settings update
-    if (requireAdminApproval !== undefined || privateDirectoryOnly !== undefined) {
+    if (
+      requireAdminApproval !== undefined ||
+      privateDirectoryOnly !== undefined ||
+      memberUnit !== undefined
+    ) {
       if (role !== "ADMIN") {
         return res.status(403).json({
           success: false,
@@ -72,6 +77,16 @@ async function profileHandler(req, res) {
       }
       if (typeof privateDirectoryOnly === "boolean") {
         familyUpdates.privateDirectoryOnly = privateDirectoryOnly;
+      }
+      if (memberUnit !== undefined) {
+        const parsedUnit = parseInt(memberUnit, 10);
+        if (Number.isNaN(parsedUnit) || parsedUnit < 1 || parsedUnit > 1000) {
+          return res.status(400).json({
+            success: false,
+            error: "Family Member Unit must be between 1 and 1000.",
+          });
+        }
+        familyUpdates.memberUnit = parsedUnit;
       }
       await familyRef.update(familyUpdates);
     }

@@ -45,7 +45,10 @@ export default async function handler(req, res) {
       password,
       requireAdminApproval = true,
       privateDirectoryOnly = true,
+      memberUnit = 5,
     } = req.body || {};
+
+    const parsedMemberUnit = Math.min(Math.max(parseInt(memberUnit, 10) || 5, 1), 1000);
 
     const validationList = [
       validateName(familyName, "Family name"),
@@ -154,6 +157,7 @@ export default async function handler(req, res) {
       adminUserCode: userCode,
       requireAdminApproval,
       privateDirectoryOnly,
+      memberUnit: parsedMemberUnit,
       createdAt: now,
       updatedAt: now,
     };
@@ -212,6 +216,7 @@ export default async function handler(req, res) {
       familyJoinId: cleanFamilyId,
       familyName: cleanFamilyName,
       adminName: cleanAdminName,
+      memberUnit: parsedMemberUnit,
       role: "ADMIN",
       token,
       expiresIn: process.env.JWT_EXPIRY || "24h",

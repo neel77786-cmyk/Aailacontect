@@ -97,6 +97,7 @@ async function meHandler(req, res) {
         adminName: familyData.adminName || "Admin",
         requireAdminApproval: familyData.requireAdminApproval ?? true,
         privateDirectoryOnly: familyData.privateDirectoryOnly ?? true,
+        memberUnit: Number(familyData.memberUnit || 0),
       },
       families,
     });
