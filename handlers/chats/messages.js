@@ -21,11 +21,10 @@ async function messagesHandler(req, res) {
 
     try {
       const threadRef = familyRef.collection("threads").doc(threadId);
-      const snap = await threadRef
-        .collection("messages")
-        .orderBy("timestamp", "asc")
-        .limit(100)
-        .get();
+      const [snap] = await Promise.all([
+        threadRef.collection("messages").orderBy("timestamp", "asc").limit(100).get(),
+        threadRef.set({ unreadBy: { [uid]: 0 } }, { merge: true }).catch(() => {}),
+      ]);
 
       const messages = snap.docs.map((doc) => {
         const d = doc.data();
@@ -42,9 +41,6 @@ async function messagesHandler(req, res) {
           status: d.status || "DELIVERED",
         };
       });
-
-      // Clear unread count for current user
-      await threadRef.set({ unreadBy: { [uid]: 0 } }, { merge: true }).catch(() => {});
 
       return res.status(200).json({ success: true, threadId, messages });
     } catch (err) {
@@ -80,39 +76,47 @@ async function messagesHandler(req, res) {
       };
 
       const threadRef = familyRef.collection("threads").doc(threadId);
-      await threadRef.collection("messages").doc(msgId).set(msgData);
 
-      // Increment unread counts for other approved members
-      const membersSnap = await familyRef
-        .collection("members")
-        .where("status", "==", "APPROVED")
-        .get();
+      // Fetch approved members and thread doc in parallel
+      const [membersSnap, threadDoc] = await Promise.all([
+        familyRef.collection("members").where("status", "==", "APPROVED").get(),
+        threadRef.get(),
+      ]);
 
-      const threadDoc = await threadRef.get();
       const existingUnread = threadDoc.exists ? threadDoc.data().unreadBy || {} : {};
       const updatedUnread = { ...existingUnread, [uid]: 0 };
-      const tokens = [];
+      const tokenSet = new Set();
 
       for (const mDoc of membersSnap.docs) {
         if (mDoc.id !== uid) {
           updatedUnread[mDoc.id] = Number(updatedUnread[mDoc.id] || 0) + 1;
-          const fcm = mDoc.data().fcmToken;
-          if (fcm) tokens.push(fcm);
+          const mData = mDoc.data();
+          if (mData.fcmToken) tokenSet.add(mData.fcmToken);
+          if (Array.isArray(mData.fcmTokens)) {
+            mData.fcmTokens.forEach((t) => {
+              if (typeof t === "string" && t.trim().length > 0) tokenSet.add(t.trim());
+            });
+          }
         }
       }
 
-      await threadRef.set(
-        {
-          lastMessagePreview: `${name}: ${cleanBody}`,
-          updatedAt: now,
-          unreadBy: updatedUnread,
-        },
-        { merge: true }
-      );
+      // Write message and update thread preview in parallel
+      await Promise.all([
+        threadRef.collection("messages").doc(msgId).set(msgData),
+        threadRef.set(
+          {
+            lastMessagePreview: `${name}: ${cleanBody}`,
+            updatedAt: now,
+            unreadBy: updatedUnread,
+          },
+          { merge: true }
+        ),
+      ]);
 
       // Best-effort FCM push notification
+      const tokens = Array.from(tokenSet);
       if (tokens.length > 0) {
-        getFirebaseAdmin()
+        await getFirebaseAdmin()
           .messaging()
           .sendEachForMulticast({
             tokens,
