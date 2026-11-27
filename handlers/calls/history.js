@@ -77,6 +77,12 @@ async function historyHandler(req, res) {
       };
     });
 
+    if (activeIncomingCall) {
+      console.log(
+        `[CALL] activeIncomingCall family=${familyId} receiver=${uid} callId=${activeIncomingCall.callId}`
+      );
+    }
+
     return res.status(200).json({
       success: true,
       familyId,
