@@ -106,6 +106,7 @@ async function initiateHandler(req, res) {
             data: {
               type: "call",
               callId: String(callId),
+              familyId: String(familyId),
               callerId: String(uid),
               callerName: safeCallerName,
               callType: String(cleanType),
