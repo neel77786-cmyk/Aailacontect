@@ -67,7 +67,14 @@ async function memberByUidHandler(req, res) {
     const { status, memberRole, onlineStatus, statusNote } = req.body || {};
 
     const updates = {};
-    if (status) updates.status = status;
+    if (status) {
+      updates.status = status;
+      if (status === "APPROVED") {
+        updates.onlineStatus = "AVAILABLE";
+        updates.statusNote = "Active in family";
+        updates.lastSeen = new Date().toISOString();
+      }
+    }
     if (memberRole) updates.role = memberRole;
     if (onlineStatus) updates.onlineStatus = onlineStatus;
     if (statusNote !== undefined) updates.statusNote = statusNote;

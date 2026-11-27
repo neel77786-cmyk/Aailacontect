@@ -42,6 +42,38 @@ async function meHandler(req, res) {
 
     const familyData = familyDoc.exists ? familyDoc.data() : {};
 
+    // Fetch all families this user owns or has joined
+    let families = [
+      {
+        familyId,
+        familyName: familyData.familyName || "Family Space",
+        role,
+        status: memberData.status || "APPROVED",
+      },
+    ];
+    const userCode = memberData.userCode;
+    if (userCode && userCode.startsWith("USR-")) {
+      const userDoc = await firestore.collection("users").doc(userCode).get();
+      const famIds = userDoc.exists && Array.isArray(userDoc.data().families) ? userDoc.data().families : [];
+      if (famIds.length > 0) {
+        const resolved = await Promise.all(
+          famIds.map(async (fId) => {
+            const fRef = firestore.collection("families").doc(fId);
+            const [fD, mD] = await Promise.all([fRef.get(), fRef.collection("members").doc(uid).get()]);
+            if (!fD.exists || !mD.exists) return null;
+            return {
+              familyId: fId,
+              familyName: fD.data().familyName || "Family Space",
+              role: mD.data().role || "MEMBER",
+              status: mD.data().status || "PENDING",
+            };
+          })
+        );
+        const valid = resolved.filter(Boolean);
+        if (valid.length > 0) families = valid;
+      }
+    }
+
     return res.status(200).json({
       success: true,
       user: {
@@ -66,6 +98,7 @@ async function meHandler(req, res) {
         requireAdminApproval: familyData.requireAdminApproval ?? true,
         privateDirectoryOnly: familyData.privateDirectoryOnly ?? true,
       },
+      families,
     });
   } catch (err) {
     console.error("Error fetching user profile:", err);

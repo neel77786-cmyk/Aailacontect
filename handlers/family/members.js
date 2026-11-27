@@ -21,8 +21,14 @@ async function membersHandler(req, res) {
         .collection("members")
         .get();
 
+      const nowMs = Date.now();
       const allMembers = membersSnapshot.docs.map((doc) => {
         const data = doc.data();
+        const lastSeenMs = data.lastSeen ? new Date(data.lastSeen).getTime() : 0;
+        const isRecentlyActive = nowMs - lastSeenMs < 120_000;
+        const computedOnline =
+          data.onlineStatus === "AVAILABLE" && !isRecentlyActive ? "OFFLINE" : (data.onlineStatus || "OFFLINE");
+
         return {
           id: doc.id,
           memberId: data.memberId || doc.id,
@@ -30,7 +36,7 @@ async function membersHandler(req, res) {
           relationship: data.relationship || "Member",
           role: data.role || "MEMBER",
           status: data.status || "PENDING",
-          onlineStatus: data.onlineStatus || "OFFLINE",
+          onlineStatus: computedOnline,
           statusNote: data.statusNote || "",
           initials: data.initials || "??",
           avatarColorIndex: data.avatarColorIndex || 0,
@@ -43,11 +49,22 @@ async function membersHandler(req, res) {
       const approvedMembers = allMembers.filter((m) => m.status === "APPROVED");
       const pendingMembers = role === "ADMIN" ? allMembers.filter((m) => m.status === "PENDING") : [];
 
+      let invites = [];
+      if (role === "ADMIN") {
+        const invitesSnap = await firestore
+          .collection("families")
+          .doc(familyId)
+          .collection("invites")
+          .get();
+        invites = invitesSnap.docs.map((d) => d.data());
+      }
+
       return res.status(200).json({
         success: true,
         familyId,
         members: approvedMembers,
         pendingMembers,
+        invites,
         count: approvedMembers.length,
       });
     } catch (err) {
