@@ -108,6 +108,8 @@ async function callByIdHandler(req, res) {
         }
       }
 
+      console.log(`[CALL] update family=${familyId} callId=${callId} status=${cleanStatus}`);
+
       return res.status(200).json({ success: true, callId, ...result.updates });
     } catch (err) {
       console.error("Error updating call:", err);

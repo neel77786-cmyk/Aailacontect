@@ -118,9 +118,14 @@ async function initiateHandler(req, res) {
       const scopedRoomName = `${familyId}_${roomName}`;
       const participantIdentity = `${familyId}_${uid}`;
       livekit = await generateLiveKitToken(participantIdentity, name, scopedRoomName);
-    } catch (_lkErr) {
+    } catch (lkErr) {
+      console.error("[CALL] LiveKit token generation failed during initiate:", lkErr?.message || lkErr);
       // Fallback: client can still request /api/livekit/token if needed
     }
+
+    console.log(
+      `[CALL] initiate family=${familyId} caller=${uid} receiver=${targetMemberId} type=${cleanType} callId=${callId} fcmTokens=${tokens.length} livekit=${Boolean(livekit?.token)}`
+    );
 
     return res.status(201).json({
       success: true,

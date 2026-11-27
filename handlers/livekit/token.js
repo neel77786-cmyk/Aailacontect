@@ -35,6 +35,8 @@ async function tokenHandler(req, res) {
       scopedRoomName
     );
 
+    console.log(`[LIVEKIT] token family=${familyId} uid=${uid} room=${scopedRoomName}`);
+
     return res.status(200).json({
       success: true,
       token: result.token,
