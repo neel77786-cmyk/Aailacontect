@@ -188,9 +188,6 @@ async function handleLegacyInviteJoin(req, res) {
     if (inviteData.expiresAt && new Date(inviteData.expiresAt).getTime() < Date.now()) {
       return res.status(400).json({ success: false, error: "Invitation code expired." });
     }
-    if ((inviteData.usedCount || 0) >= (inviteData.maxUses || 1)) {
-      return res.status(400).json({ success: false, error: "Invitation usage limit reached." });
-    }
 
     const memberUid = `mem_${uuidv4().replace(/-/g, "").substring(0, 20)}`;
     const passwordHash = await bcrypt.hash(password, 10);

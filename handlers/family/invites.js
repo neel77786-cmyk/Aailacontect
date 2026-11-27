@@ -61,9 +61,8 @@ async function invitesHandler(req, res) {
       });
     }
 
-    const { expiresInHours = 24, maxUses = 5 } = req.body || {};
+    const { expiresInHours = 24 } = req.body || {};
     const parsedHours = Math.min(Math.max(Number(expiresInHours) || 24, 1), 168);
-    const parsedMaxUses = Math.min(Math.max(Number(maxUses) || 5, 1), 50);
 
     try {
       const code = crypto.randomBytes(4).toString("hex").toUpperCase();
@@ -76,7 +75,7 @@ async function invitesHandler(req, res) {
         createdBy: uid,
         createdAt: new Date(now).toISOString(),
         expiresAt,
-        maxUses: parsedMaxUses,
+        maxUses: 0,
         usedCount: 0,
         active: true,
       };
