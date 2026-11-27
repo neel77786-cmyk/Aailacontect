@@ -41,6 +41,10 @@ async function switchFamilyHandler(req, res) {
 
     const famData = famDoc.data();
     const role = memData.role || "MEMBER";
+    await famRef.collection("members").doc(uid).update({
+      onlineStatus: "AVAILABLE",
+      lastSeen: new Date().toISOString(),
+    });
     const token = signToken(uid, targetFamilyId, role);
 
     return res.status(200).json({

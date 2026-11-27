@@ -22,12 +22,27 @@ async function membersHandler(req, res) {
         .get();
 
       const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+
+      // Heartbeat: keep the polling caller marked AVAILABLE with fresh lastSeen
+      firestore
+        .collection("families")
+        .doc(familyId)
+        .collection("members")
+        .doc(uid)
+        .update({ onlineStatus: "AVAILABLE", lastSeen: nowIso })
+        .catch(() => {});
+
       const allMembers = membersSnapshot.docs.map((doc) => {
         const data = doc.data();
-        const lastSeenMs = data.lastSeen ? new Date(data.lastSeen).getTime() : 0;
+        const isCaller = doc.id === uid;
+        const lastSeenMs = isCaller ? nowMs : (data.lastSeen ? new Date(data.lastSeen).getTime() : 0);
         const isRecentlyActive = nowMs - lastSeenMs < 120_000;
-        const computedOnline =
-          data.onlineStatus === "AVAILABLE" && !isRecentlyActive ? "OFFLINE" : (data.onlineStatus || "OFFLINE");
+        const computedOnline = isCaller
+          ? "AVAILABLE"
+          : data.onlineStatus === "AVAILABLE" && !isRecentlyActive
+            ? "OFFLINE"
+            : (data.onlineStatus || "OFFLINE");
 
         return {
           id: doc.id,

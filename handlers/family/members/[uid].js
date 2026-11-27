@@ -1,3 +1,4 @@
+import admin from "firebase-admin";
 import { getFirestore } from "../../../lib/firebase-admin.js";
 import { requireAuth } from "../../../lib/auth-middleware.js";
 
@@ -48,7 +49,17 @@ async function memberByUidHandler(req, res) {
         });
       }
 
+      const memberData = memberDoc.data();
       await memberRef.delete();
+
+      // Also remove this family from the member's /users/{userCode}.families so they can re-join cleanly
+      if (memberData?.userCode && memberData.userCode.startsWith("USR-")) {
+        await firestore
+          .collection("users")
+          .doc(memberData.userCode)
+          .update({ families: admin.firestore.FieldValue.arrayRemove(familyId) })
+          .catch(() => {});
+      }
 
       return res.status(200).json({
         success: true,
