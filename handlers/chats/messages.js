@@ -2,6 +2,9 @@ import { v4 as uuidv4 } from "uuid";
 import { getFirebaseAdmin, getFirestore } from "../../lib/firebase-admin.js";
 import { requireApprovedMember } from "../../lib/auth-middleware.js";
 
+const unreadClearedCache = new Map();
+const UNREAD_CLEAR_TTL_MS = 30_000;
+
 /**
  * /api/chats/messages
  *
@@ -21,10 +24,18 @@ async function messagesHandler(req, res) {
 
     try {
       const threadRef = familyRef.collection("threads").doc(threadId);
-      const [snap] = await Promise.all([
-        threadRef.collection("messages").orderBy("timestamp", "asc").limit(100).get(),
-        threadRef.set({ unreadBy: { [uid]: 0 } }, { merge: true }).catch(() => {}),
-      ]);
+      const unreadKey = `${familyId}:${threadId}:${uid}`;
+      const nowMs = Date.now();
+      const shouldClearUnread = nowMs - (unreadClearedCache.get(unreadKey) || 0) >= UNREAD_CLEAR_TTL_MS;
+      if (shouldClearUnread) unreadClearedCache.set(unreadKey, nowMs);
+
+      const tasks = [
+        threadRef.collection("messages").orderBy("timestamp", "asc").limit(50).get(),
+      ];
+      if (shouldClearUnread) {
+        tasks.push(threadRef.set({ unreadBy: { [uid]: 0 } }, { merge: true }).catch(() => {}));
+      }
+      const [snap] = await Promise.all(tasks);
 
       const messages = snap.docs.map((doc) => {
         const d = doc.data();

@@ -2,6 +2,9 @@ import { getFirestore } from "../../lib/firebase-admin.js";
 import { requireApprovedMember } from "../../lib/auth-middleware.js";
 import { generateLiveKitToken } from "../../lib/livekit.js";
 
+const userFamiliesCache = new Map();
+const USER_FAMILIES_TTL_MS = 60_000;
+
 /**
  * GET /api/calls/history
  *
@@ -23,7 +26,7 @@ async function historyHandler(req, res) {
       .doc(familyId)
       .collection("calls")
       .orderBy("createdAt", "desc")
-      .limit(15)
+      .limit(10)
       .get();
 
     const nowMs = Date.now();
@@ -79,52 +82,60 @@ async function historyHandler(req, res) {
       };
     });
 
-    // Also check any other approved families this user belongs to so incoming calls
-    // arrive even if the user hasn't manually switched their active family.
+    // Also check any other approved families this user belongs to (with 60s family-list cache)
     if (!activeIncomingCall) {
       try {
-        const memDoc = await firestore
-          .collection("families")
-          .doc(familyId)
-          .collection("members")
-          .doc(uid)
-          .get();
-        const userCode = memDoc.exists ? memDoc.data()?.userCode : null;
-        if (userCode && userCode.startsWith("USR-")) {
-          const userDoc = await firestore.collection("users").doc(userCode).get();
-          const famIds =
-            userDoc.exists && Array.isArray(userDoc.data().families)
-              ? userDoc.data().families.filter((f) => f && f !== familyId)
-              : [];
-          for (const otherFamId of famIds) {
-            if (activeIncomingCall) break;
-            const otherSnap = await firestore
-              .collection("families")
-              .doc(otherFamId)
-              .collection("calls")
-              .orderBy("createdAt", "desc")
-              .limit(5)
-              .get();
-            for (const cDoc of otherSnap.docs) {
-              const cData = cDoc.data();
-              const cMs = cData.createdAt ? new Date(cData.createdAt).getTime() : 0;
-              if (
-                cData.receiverId === uid &&
-                cData.status === "OFFERING" &&
-                nowMs - cMs < 60_000
-              ) {
-                activeIncomingCall = {
-                  callId: cDoc.id,
-                  familyId: otherFamId,
-                  callerId: cData.callerId,
-                  callerName: cData.callerName || "Family Member",
-                  callType: cData.callType || "VOICE",
-                  roomName: cData.roomName || `call_${cDoc.id}`,
-                  status: cData.status,
-                  startTime: cData.startTime,
-                };
-                break;
-              }
+        const cacheKey = `${familyId}:${uid}`;
+        let cached = userFamiliesCache.get(cacheKey);
+        let famIds = cached && nowMs - cached.ts < USER_FAMILIES_TTL_MS ? cached.famIds : null;
+
+        if (!famIds) {
+          famIds = [];
+          const memDoc = await firestore
+            .collection("families")
+            .doc(familyId)
+            .collection("members")
+            .doc(uid)
+            .get();
+          const userCode = memDoc.exists ? memDoc.data()?.userCode : null;
+          if (userCode && userCode.startsWith("USR-")) {
+            const userDoc = await firestore.collection("users").doc(userCode).get();
+            famIds =
+              userDoc.exists && Array.isArray(userDoc.data().families)
+                ? userDoc.data().families.filter((f) => f && f !== familyId)
+                : [];
+          }
+          userFamiliesCache.set(cacheKey, { famIds, ts: nowMs });
+        }
+
+        for (const otherFamId of famIds) {
+          if (activeIncomingCall) break;
+          const otherSnap = await firestore
+            .collection("families")
+            .doc(otherFamId)
+            .collection("calls")
+            .orderBy("createdAt", "desc")
+            .limit(3)
+            .get();
+          for (const cDoc of otherSnap.docs) {
+            const cData = cDoc.data();
+            const cMs = cData.createdAt ? new Date(cData.createdAt).getTime() : 0;
+            if (
+              cData.receiverId === uid &&
+              cData.status === "OFFERING" &&
+              nowMs - cMs < 60_000
+            ) {
+              activeIncomingCall = {
+                callId: cDoc.id,
+                familyId: otherFamId,
+                callerId: cData.callerId,
+                callerName: cData.callerName || "Family Member",
+                callType: cData.callType || "VOICE",
+                roomName: cData.roomName || `call_${cDoc.id}`,
+                status: cData.status,
+                startTime: cData.startTime,
+              };
+              break;
             }
           }
         }

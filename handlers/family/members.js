@@ -3,6 +3,9 @@ import { requireApprovedMember } from "../../lib/auth-middleware.js";
 import { validateName } from "../../lib/validators.js";
 import { v4 as uuidv4 } from "uuid";
 
+const heartbeatCache = new Map();
+const HEARTBEAT_TTL_MS = 45_000;
+
 /**
  * /api/family/members
  *
@@ -24,14 +27,19 @@ async function membersHandler(req, res) {
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
 
-      // Heartbeat: keep the polling caller marked AVAILABLE with fresh lastSeen
-      firestore
-        .collection("families")
-        .doc(familyId)
-        .collection("members")
-        .doc(uid)
-        .update({ onlineStatus: "AVAILABLE", lastSeen: nowIso })
-        .catch(() => {});
+      // Throttle heartbeat writes to once every 45s to conserve Firestore write quota
+      const hbKey = `${familyId}:${uid}`;
+      const lastHb = heartbeatCache.get(hbKey) || 0;
+      if (nowMs - lastHb >= HEARTBEAT_TTL_MS) {
+        heartbeatCache.set(hbKey, nowMs);
+        firestore
+          .collection("families")
+          .doc(familyId)
+          .collection("members")
+          .doc(uid)
+          .update({ onlineStatus: "AVAILABLE", lastSeen: nowIso })
+          .catch(() => {});
+      }
 
       const allMembers = membersSnapshot.docs.map((doc) => {
         const data = doc.data();
