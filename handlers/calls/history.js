@@ -1,5 +1,6 @@
 import { getFirestore } from "../../lib/firebase-admin.js";
 import { requireApprovedMember } from "../../lib/auth-middleware.js";
+import { generateLiveKitToken } from "../../lib/livekit.js";
 
 /**
  * GET /api/calls/history
@@ -133,8 +134,22 @@ async function historyHandler(req, res) {
     }
 
     if (activeIncomingCall) {
+      try {
+        const targetFam = activeIncomingCall.familyId || familyId;
+        const scopedRoomName = `${targetFam}_${activeIncomingCall.roomName}`;
+        const participantIdentity = `${targetFam}_${uid}`;
+        const lk = await generateLiveKitToken(
+          participantIdentity,
+          req.user.name || "Family Member",
+          scopedRoomName
+        );
+        activeIncomingCall.livekitToken = lk?.token || null;
+        activeIncomingCall.livekitUrl = lk?.url || null;
+      } catch (_lkErr) {
+        // Fallback: client can still request /api/livekit/token on accept
+      }
       console.log(
-        `[CALL] activeIncomingCall family=${activeIncomingCall.familyId || familyId} receiver=${uid} callId=${activeIncomingCall.callId}`
+        `[CALL] activeIncomingCall family=${activeIncomingCall.familyId || familyId} receiver=${uid} callId=${activeIncomingCall.callId} preToken=${Boolean(activeIncomingCall.livekitToken)}`
       );
     }
 
