@@ -2,21 +2,13 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import { getAuth, getFirestore } from "../../lib/firebase-admin.js";
 import { signToken } from "../../lib/auth-middleware.js";
+import { isValidEmail, normalizeEmail, verifyOtpProofToken } from "../../lib/email-otp.js";
 import {
   validateFamilyId,
   validatePassword,
   validateName,
   collectErrors,
 } from "../../lib/validators.js";
-
-function normalizePhone(raw) {
-  if (typeof raw !== "string") return "";
-  const cleaned = raw.replace(/[\s\-()]/g, "").trim();
-  if (!cleaned) return "";
-  if (cleaned.startsWith("+")) return cleaned;
-  if (/^\d{10}$/.test(cleaned)) return `+91${cleaned}`;
-  return `+${cleaned}`;
-}
 
 const ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -52,15 +44,15 @@ export default async function handler(req, res) {
       adminName,
       familyId,
       password,
-      phoneNumber,
-      firebaseIdToken,
+      email,
+      otpToken,
       requireAdminApproval = true,
       privateDirectoryOnly = true,
       memberUnit = 5,
     } = req.body || {};
 
     const parsedMemberUnit = Math.min(Math.max(parseInt(memberUnit, 10) || 5, 1), 1000);
-    let cleanPhone = normalizePhone(phoneNumber || "");
+    const cleanEmail = normalizeEmail(email || "");
 
     const validationList = [
       validateName(familyName, "Family name"),
@@ -81,25 +73,37 @@ export default async function handler(req, res) {
     const auth = getAuth();
     const firestore = getFirestore();
 
-    if (firebaseIdToken && typeof firebaseIdToken === "string") {
-      try {
-        const decoded = await auth.verifyIdToken(firebaseIdToken);
-        if (decoded?.phone_number) {
-          cleanPhone = normalizePhone(decoded.phone_number);
-        }
-      } catch (_otpErr) {
-        return res.status(401).json({
-          success: false,
-          error: "OTP verification failed or expired. Please verify your phone number again.",
-        });
-      }
-    }
-
-    if (cleanPhone && !/^\+\d{8,15}$/.test(cleanPhone)) {
+    if (cleanEmail && !isValidEmail(cleanEmail)) {
       return res.status(400).json({
         success: false,
-        error: "Please enter a valid phone number (e.g. +919876543210).",
+        error: "Please enter a valid email address.",
       });
+    }
+
+    let emailVerified = false;
+    if (otpToken && typeof otpToken === "string") {
+      const verified = verifyOtpProofToken(otpToken, cleanEmail, "register");
+      if (!verified) {
+        return res.status(401).json({
+          success: false,
+          error: "Email OTP verification expired or invalid. Please verify your email again.",
+        });
+      }
+      emailVerified = true;
+    }
+
+    if (cleanEmail) {
+      const dupSnap = await firestore
+        .collection("users")
+        .where("email", "==", cleanEmail)
+        .limit(1)
+        .get();
+      if (!dupSnap.empty) {
+        return res.status(409).json({
+          success: false,
+          error: `An account already exists with ${cleanEmail}.`,
+        });
+      }
     }
 
     // Hash password securely with bcryptjs
@@ -174,8 +178,8 @@ export default async function handler(req, res) {
       uid,
       userCode,
       name: cleanAdminName,
-      phoneNumber: cleanPhone || null,
-      phoneVerified: Boolean(firebaseIdToken && cleanPhone),
+      email: cleanEmail || null,
+      emailVerified,
       passwordHash,
       ownFamilyId: cleanFamilyId,
       families: [cleanFamilyId],
@@ -202,7 +206,7 @@ export default async function handler(req, res) {
       userCode,
       memberId: userCode,
       name: cleanAdminName,
-      phoneNumber: cleanPhone || null,
+      email: cleanEmail || null,
       relationship: "Family Admin",
       role: "ADMIN",
       status: "APPROVED",

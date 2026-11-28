@@ -8,6 +8,8 @@ import logoutHandler from "./handlers/auth/logout.js";
 import refreshHandler from "./handlers/auth/refresh.js";
 import passwordHandler from "./handlers/auth/password.js";
 import resetPasswordHandler from "./handlers/auth/reset-password.js";
+import sendEmailOtpHandler from "./handlers/auth/send-email-otp.js";
+import verifyEmailOtpHandler from "./handlers/auth/verify-email-otp.js";
 import switchFamilyHandler from "./handlers/auth/switch-family.js";
 import membersHandler from "./handlers/family/members.js";
 import memberByUidHandler from "./handlers/family/members/[uid].js";
@@ -36,6 +38,8 @@ app.all("/api/auth/logout", (req, res) => logoutHandler(req, res));
 app.all("/api/auth/refresh", (req, res) => refreshHandler(req, res));
 app.all("/api/auth/password", (req, res) => passwordHandler(req, res));
 app.all("/api/auth/reset-password", (req, res) => resetPasswordHandler(req, res));
+app.all("/api/auth/send-email-otp", (req, res) => sendEmailOtpHandler(req, res));
+app.all("/api/auth/verify-email-otp", (req, res) => verifyEmailOtpHandler(req, res));
 app.all("/api/auth/switch-family", (req, res) => switchFamilyHandler(req, res));
 app.all("/api/family/members", (req, res) => membersHandler(req, res));
 app.all("/api/family/members/:uid", (req, res) => {

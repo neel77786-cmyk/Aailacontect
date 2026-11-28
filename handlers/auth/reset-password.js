@@ -1,21 +1,13 @@
 import bcrypt from "bcryptjs";
 import { getAuth, getFirestore } from "../../lib/firebase-admin.js";
+import { isValidEmail, normalizeEmail, verifyOtpProofToken } from "../../lib/email-otp.js";
 import { validatePassword } from "../../lib/validators.js";
-
-function normalizePhone(raw) {
-  if (typeof raw !== "string") return "";
-  const cleaned = raw.replace(/[\s\-()]/g, "").trim();
-  if (!cleaned) return "";
-  if (cleaned.startsWith("+")) return cleaned;
-  if (/^\d{10}$/.test(cleaned)) return `+91${cleaned}`;
-  return `+${cleaned}`;
-}
 
 /**
  * POST /api/auth/reset-password
  *
- * Verifies a Firebase Phone Auth ID token (issued after SMS OTP verification),
- * finds the matching user by phoneNumber, and resets their password cleanly.
+ * Verifies an Email OTP proof token (`otpToken`), finds the user by email,
+ * and updates their password across Firestore and Firebase Auth.
  */
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -24,51 +16,37 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { phoneNumber, firebaseIdToken, newPassword } = req.body || {};
+    const { email, otpToken, newPassword } = req.body || {};
+    const cleanEmail = normalizeEmail(email);
+
+    if (!isValidEmail(cleanEmail)) {
+      return res.status(400).json({ success: false, error: "Please enter a valid email address." });
+    }
 
     const pwdErr = validatePassword(newPassword);
     if (pwdErr) {
       return res.status(400).json({ success: false, error: pwdErr });
     }
 
-    if (!firebaseIdToken || typeof firebaseIdToken !== "string") {
-      return res.status(400).json({
-        success: false,
-        error: "OTP verification is required before resetting password.",
-      });
-    }
-
-    const auth = getAuth();
-    let decoded;
-    try {
-      decoded = await auth.verifyIdToken(firebaseIdToken);
-    } catch (_err) {
+    const verifiedEmail = verifyOtpProofToken(otpToken, cleanEmail, "reset");
+    if (!verifiedEmail) {
       return res.status(401).json({
         success: false,
-        error: "OTP verification expired or invalid. Please verify OTP again.",
-      });
-    }
-
-    const verifiedPhone = normalizePhone(decoded.phone_number || "");
-    const requestedPhone = normalizePhone(phoneNumber || "");
-    if (!verifiedPhone || (requestedPhone && verifiedPhone !== requestedPhone)) {
-      return res.status(403).json({
-        success: false,
-        error: "Verified phone number does not match the entered phone number.",
+        error: "Email OTP verification expired or invalid. Please verify OTP again.",
       });
     }
 
     const firestore = getFirestore();
     const usersSnap = await firestore
       .collection("users")
-      .where("phoneNumber", "==", verifiedPhone)
+      .where("email", "==", verifiedEmail)
       .limit(1)
       .get();
 
     if (usersSnap.empty) {
       return res.status(404).json({
         success: false,
-        error: `No AAILA account found with phone number ${verifiedPhone}.`,
+        error: `No AAILA account found for ${verifiedEmail}.`,
       });
     }
 
@@ -96,7 +74,7 @@ export default async function handler(req, res) {
     }
 
     if (uid) {
-      await auth.updateUser(uid, { password: newPassword }).catch(() => {});
+      await getAuth().updateUser(uid, { password: newPassword }).catch(() => {});
     }
 
     return res.status(200).json({
