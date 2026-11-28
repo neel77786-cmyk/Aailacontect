@@ -1,5 +1,5 @@
 import { getFirestore } from "../../lib/firebase-admin.js";
-import { requireAuth } from "../../lib/auth-middleware.js";
+import { requireAuth, signToken } from "../../lib/auth-middleware.js";
 
 /**
  * GET /api/auth/me
@@ -76,6 +76,7 @@ async function meHandler(req, res) {
 
     return res.status(200).json({
       success: true,
+      refreshedToken: signToken(uid, familyId, memberData.role || role),
       user: {
         userId: memberData.userCode || uid,
         authUid: uid,
