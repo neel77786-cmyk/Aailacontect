@@ -9,6 +9,15 @@ import {
   collectErrors,
 } from "../../lib/validators.js";
 
+function normalizePhone(raw) {
+  if (typeof raw !== "string") return "";
+  const cleaned = raw.replace(/[\s\-()]/g, "").trim();
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+")) return cleaned;
+  if (/^\d{10}$/.test(cleaned)) return `+91${cleaned}`;
+  return `+${cleaned}`;
+}
+
 const ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function generateCode(prefix, length = 6) {
@@ -43,12 +52,15 @@ export default async function handler(req, res) {
       adminName,
       familyId,
       password,
+      phoneNumber,
+      firebaseIdToken,
       requireAdminApproval = true,
       privateDirectoryOnly = true,
       memberUnit = 5,
     } = req.body || {};
 
     const parsedMemberUnit = Math.min(Math.max(parseInt(memberUnit, 10) || 5, 1), 1000);
+    let cleanPhone = normalizePhone(phoneNumber || "");
 
     const validationList = [
       validateName(familyName, "Family name"),
@@ -68,6 +80,27 @@ export default async function handler(req, res) {
     const cleanAdminName = adminName.trim();
     const auth = getAuth();
     const firestore = getFirestore();
+
+    if (firebaseIdToken && typeof firebaseIdToken === "string") {
+      try {
+        const decoded = await auth.verifyIdToken(firebaseIdToken);
+        if (decoded?.phone_number) {
+          cleanPhone = normalizePhone(decoded.phone_number);
+        }
+      } catch (_otpErr) {
+        return res.status(401).json({
+          success: false,
+          error: "OTP verification failed or expired. Please verify your phone number again.",
+        });
+      }
+    }
+
+    if (cleanPhone && !/^\+\d{8,15}$/.test(cleanPhone)) {
+      return res.status(400).json({
+        success: false,
+        error: "Please enter a valid phone number (e.g. +919876543210).",
+      });
+    }
 
     // Hash password securely with bcryptjs
     const passwordHash = await bcrypt.hash(password, 10);
@@ -141,6 +174,8 @@ export default async function handler(req, res) {
       uid,
       userCode,
       name: cleanAdminName,
+      phoneNumber: cleanPhone || null,
+      phoneVerified: Boolean(firebaseIdToken && cleanPhone),
       passwordHash,
       ownFamilyId: cleanFamilyId,
       families: [cleanFamilyId],
@@ -167,6 +202,7 @@ export default async function handler(req, res) {
       userCode,
       memberId: userCode,
       name: cleanAdminName,
+      phoneNumber: cleanPhone || null,
       relationship: "Family Admin",
       role: "ADMIN",
       status: "APPROVED",
